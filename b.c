@@ -339,7 +339,7 @@ bool parse_funccall(struct parser *p, struct compiler *compiler)
 	if (expect_token(p, &arg, TOK_CHARACTER)) {
 		printf("\tmov rdi, %"PRIu64"\n", arg.ival);
 	} else if (expect_token(p, &arg, TOK_STRING)) {
-		printf("\tmov rdi, strend-%zu\n", string_offset(arg.text));
+		printf("\tlea rdi, [strend-%zu]\n", string_offset(arg.text));
 	}
 
 	struct token close;
