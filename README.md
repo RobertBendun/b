@@ -5,17 +5,11 @@ The goal is to represent the spirit of the language and there is no need to matc
 It's B for modern systems.
 
 ```b
-/* Compiler doesn't have string literals yet */
-/* Prints hello and newline to the standard output using libc */
+/* Prints hello, world and a newline to the standard output using libc */
 main()
-	extrn putchar;
+	extrn printf;
 {
-	putchar('h');
-	putchar('e');
-	putchar('l');
-	putchar('l');
-	putchar('o');
-	putchar('*n');
+    printf("hello, world*n");
 }
 ```
 

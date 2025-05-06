@@ -28,6 +28,45 @@ struct string_builder
 	(where)->items[(where)->count++] = (what); \
 } while(0)
 
+struct string_pool
+{
+	char const* str;
+	size_t strlen, total;
+	struct string_pool *next;
+};
+
+static struct string_pool *string_intering_pool = NULL;
+
+char const* inter(char const *str)
+{
+	size_t len = strlen(str);
+
+	for (struct string_pool *p = string_intering_pool; p != NULL; p = p->next) {
+		if (p->strlen >= len && strcmp(str, p->str + (p->strlen - len)) == 0) {
+			free((void*)str);
+			return p->str + (p->strlen - len);
+		}
+	}
+
+	struct string_pool *p = malloc(sizeof(struct string_pool));
+	p->str = str;
+	p->strlen = len;
+	p->next = string_intering_pool;
+	p->total = p->strlen + 1 + (p->next ? p->next->total : 0);
+	string_intering_pool = p;
+	return p->str;
+}
+
+size_t string_offset(char const* str)
+{
+	for (struct string_pool *p = string_intering_pool; p != NULL; p = p->next) {
+		if (p->str <= str && str <= p->str + p->strlen) {
+			return p->total - (str -  p->str);
+		}
+	}
+	return -1;
+}
+
 struct token
 {
 	enum token_kind
@@ -60,6 +99,7 @@ struct token
 		// Literals:
 		TOK_INTEGER,
 		TOK_CHARACTER,
+		TOK_STRING,
 	} kind;
 
 	char const* text;
@@ -74,6 +114,7 @@ struct tokenizer
 	FILE *source;
 	char const* filename;
 	int line, column;
+	struct string_pool strings;
 };
 
 struct token scan(struct tokenizer *ctx);
@@ -137,6 +178,13 @@ int main()
 	while ((tok = scan(&tokctx)).kind != TOK_EOF) {
 		dump_token(stdout, tok);
 	}
+
+	int i = 0;
+	printf("string intering pool:\n");
+	for (struct string_pool *p = string_intering_pool; p != NULL; p = p->next) {
+		printf("[%d] = \"%s\"\n", i++, p->str);
+	}
+
 #else
 	struct compiler compiler = {
 	};
@@ -153,6 +201,19 @@ int main()
 	printf("format ELF64\n");
 	printf("section \".text\" executable\n");
 	parse_program(&parser, &compiler);
+
+	printf("section \".data\"\n");
+
+	if (string_intering_pool) {
+		printf("db 0x00");
+		for (struct string_pool *p = string_intering_pool; p != NULL; p = p->next) {
+			for (char const *s = p->str; *s; ++s) {
+				printf(",0x%02x", *s);
+			}
+			printf(",0x00");
+		}
+		printf("\nstrend = $\n");
+	}
 
 #endif
 }
@@ -274,9 +335,11 @@ bool parse_funccall(struct parser *p, struct compiler *compiler)
 		exit(2);
 	}
 
-	struct token character;
-	if (expect_token(p, &character, TOK_CHARACTER)) {
-		printf("\tmov rdi, %"PRIu64"\n", character.ival);
+	struct token arg;
+	if (expect_token(p, &arg, TOK_CHARACTER)) {
+		printf("\tmov rdi, %"PRIu64"\n", arg.ival);
+	} else if (expect_token(p, &arg, TOK_STRING)) {
+		printf("\tmov rdi, strend-%zu\n", string_offset(arg.text));
 	}
 
 	struct token close;
@@ -426,6 +489,7 @@ char const* token_short_name(struct token tok)
 	case TOK_RETURN: return "return keyword";
 	case TOK_SWITCH: return "switch keyword";
 	case TOK_WHILE: return "while keyword";
+	case TOK_STRING: return "string literal";
 	}
 
 	assert(0 && "unreachable");
@@ -449,6 +513,10 @@ void dump_token(FILE *out, struct token tok)
 
 	case TOK_CHARACTER:
 		fprintf(out, "Char '%s', %" PRIu64 "\n", tok.text, tok.ival);
+		break;
+
+	case TOK_STRING:
+		fprintf(out, "String \"%s\"\n", tok.text);
 		break;
 
 	case TOK_AUTO:
@@ -475,9 +543,26 @@ void dump_token(FILE *out, struct token tok)
 	}
 }
 
+uint64_t escape_seq(char c, char const* filename, int line, int column)
+{
+	switch (c) {
+	case '0':  return 0;
+	case 'e':  return EOF;
+	case 'n':  return '\n';
+	case 'r':  return '\r';
+	case '*':  return '*';
+	case '"':  return '"';
+	case '\'': return '\'';
+
+	default:
+		fprintf(stderr, "%s:%d:%d: error: unknown escape sequence *%c\n", filename, line, column, c);
+		exit(1);
+	}
+}
+
 struct token scan(struct tokenizer *ctx)
 {
-	char c;
+	int c;
 	struct string_builder buf = {};
 	struct token ret = {
 		.filename = ctx->filename,
@@ -527,6 +612,47 @@ again:
 		ctx->column = 1;
 		goto again;
 
+	case '"':
+		ret.column = ctx->column++;
+		ret.line = ctx->line;
+		ret.kind = TOK_STRING;
+
+		{
+			struct string_builder sb = {};
+
+			for (;;) {
+				switch (c = fgetc(ctx->source)) {
+				case EOF:
+					fprintf(stderr, "%s:%d:%d: error: expected end of string literal, got end of file\n", ctx->filename, ctx->line, ctx->column);
+					exit(1);
+
+				case '\"':
+					ctx->column++;
+					da_append(&sb, '\0');
+					ret.text = inter(sb.items);
+					return ret;
+
+				case '*':
+					ctx->column++;
+					c = fgetc(ctx->source);
+					da_append(&sb, escape_seq(c, ctx->filename, ctx->line, ctx->column));
+					break;
+
+				case '\n':
+					ctx->line++; __attribute__ ((fallthrough));
+				case '\r':
+					ctx->column = 1;
+					da_append(&sb, c);
+					break;
+
+				default:
+					ctx->column++;
+					da_append(&sb, c);
+				}
+			}
+		}
+		break;
+
 	case '\'':
 		ret.column = ctx->column++;
 		ret.line = ctx->line;
@@ -539,18 +665,8 @@ again:
 
 		case '*':
 			ctx->column++;
-			c = fgetc(ctx->source);
-			switch (c) {
-			case '0': ret.ival = 0; break;
-			case 'e': ret.ival = EOF; break;
-			case 'n': ret.ival = '\n'; break;
-			case 'r': ret.ival = '\r'; break;
-			case '*': ret.ival = '*'; break;
-
-			default:
-				fprintf(stderr, "%s:%d:%d: error: unknown escape sequence *%c\n", ret.filename, ret.line, ret.column, c);
-			}
-			ret.text = strdup((char[]) { '*', c, '\0' });
+			ret.text = strdup((char[]) { '*', escape_seq(fgetc(ctx->source), ctx->filename, ctx->line, ctx->column), '\0' });
+			ctx->column++;
 			break;
 
 
