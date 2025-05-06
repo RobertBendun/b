@@ -202,7 +202,7 @@ int main()
 	printf("section \".text\" executable\n");
 	parse_program(&parser, &compiler);
 
-	printf("section \".data\"\n");
+	printf("section \".rodata\"\n");
 
 	if (string_intering_pool) {
 		printf("db 0x00");
