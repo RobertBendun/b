@@ -1,0 +1,32 @@
+Since main() return 10; is proper function declaration in B, we have clear path for very easy anonymous function syntax, for example:
+  \() return 10;
+Note that this is just anonymous function - it doesn't hold any state and cannot reference any of the surrunding context.
+For all purposes it should be considered as:
+
+main() { (\() {})(); }
+\() {} is the same as
+__compile_time_generated_symbol(){}
+main() { __compile_time_generated_symbol(); }
+
+Example of usage:
+iota(n, f) {
+	auto i, total;
+	for (i = 1; i < n; ++i) {
+		f(i);
+	}
+}
+
+iota_reduce(n, f) {
+	auto i, r;
+	for (i = 1; i < n; ++i) {
+		r = f(r, i);
+	}
+	return r;
+}
+
+factorial(n) return iota_reduce(n, \(r, i) return r * i;);
+
+main() {
+	iota(10, \(x) printf("%d\n", x););
+	printf("5! = ", factorial(5));
+}
