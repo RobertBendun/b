@@ -3,7 +3,7 @@ CFLAGS = -Wall -Wextra -Werror=switch -Werror=implicit-fallthrough -fsanitize=un
 EXAMPLES = $(wildcard examples/*.b)
 TESTS = $(wildcard tests/*.b)
 
-all: b
+all: b examples
 
 test: b snap.sh $(TESTS)
 	for test in $(TESTS); do echo $$test; ./snap.sh $$test; done
