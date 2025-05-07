@@ -142,8 +142,12 @@ struct parser
 
 struct symbol
 {
-	enum symbol_kind { EXTERNAL, OURS, } kind;
+	enum symbol_kind {
+		EXTERNAL,
+		OURS,
+	} kind;
 	char const* name;
+	size_t id;
 };
 
 struct symbols
@@ -154,8 +158,66 @@ struct symbols
 
 struct compiler
 {
-	struct symbols symbols;
+#define MAX_SCOPE_NESTING 64
+	struct symbols symbols[MAX_SCOPE_NESTING];
+	size_t nesting;
+	size_t last_symbol_id;
+
+	struct {
+		char const **items;
+		size_t count, capacity;
+	} defined_externs;
 };
+
+void enter_scope(struct compiler *compiler)
+{
+	++compiler->nesting;
+	assert(compiler->nesting < MAX_SCOPE_NESTING);
+	compiler->symbols[compiler->nesting].count = 0;
+}
+
+void leave_scope(struct compiler *compiler)
+{
+	assert(compiler->nesting > 0 && "Trying to leave when in global scope");
+	--compiler->nesting;
+}
+
+struct symbol* search_symbol_in_scope(struct compiler *compiler, char const* identifier)
+{
+	struct symbols scope = compiler->symbols[compiler->nesting];
+	for (size_t i = 0; i < scope.count; ++i) {
+		if (strcmp(scope.items[i].name, identifier) == 0)
+			return &scope.items[i];
+	}
+	return NULL;
+}
+
+struct symbol* search_symbol(struct compiler *compiler, char const* identifier)
+{
+	for (int level = compiler->nesting; level >= 0; --level) {
+		struct symbols scope = compiler->symbols[level];
+		for (size_t i = 0; i < scope.count; ++i) {
+			if (strcmp(scope.items[i].name, identifier) == 0)
+				return &scope.items[i];
+		}
+	}
+	return NULL;
+}
+
+struct symbol define_symbol(struct compiler *compiler, struct symbol symbol, struct token name)
+{
+	struct symbol *s;
+	if ((s = search_symbol_in_scope(compiler, symbol.name))) {
+		// TODO: Mention previous definition
+		fprintf(stderr, "%s:%d:%d: error: symbol %s has already been defined\n", name.filename, name.line, name.column, name.text);
+		exit(1);
+	}
+	++compiler->last_symbol_id;
+	assert(compiler->last_symbol_id > 0);
+	symbol.id = compiler->last_symbol_id;
+	da_append(&compiler->symbols[compiler->nesting], symbol);
+	return symbol;
+}
 
 struct token get_token(struct parser *p);
 void putback_token(struct parser *p, struct token tok);
@@ -300,16 +362,18 @@ bool parse_extern(struct parser *p, struct compiler *compiler)
 
 	struct token name;
 	if (expect_token(p, &name, TOK_IDENTIFIER)) {
+		define_symbol(compiler, (struct symbol) { .name = name.text, .kind = EXTERNAL }, name);
+
 		bool found = false;
-		for (size_t i = 0; i < compiler->symbols.count; ++i) {
-			if (strcmp(compiler->symbols.items[i].name, name.text) == 0) {
+		for (size_t i = 0; i < compiler->defined_externs.count; ++i) {
+			if (strcmp(compiler->defined_externs.items[i], name.text) == 0) {
 				found = true;
 				break;
 			}
 		}
 		if (!found) {
 			printf("\textrn %s\n", name.text);
-			da_append(&compiler->symbols, ((struct symbol) { .kind = EXTERNAL, .name = name.text }));
+			da_append(&compiler->defined_externs, name.text);
 		}
 		struct token semicolon;
 		if (!expect_token(p, &semicolon, TOK_SEMICOLON)) {
@@ -323,6 +387,7 @@ bool parse_extern(struct parser *p, struct compiler *compiler)
 
 	return true;
 }
+
 
 bool parse_funccall(struct parser *p, struct compiler *compiler)
 {
@@ -349,20 +414,13 @@ bool parse_funccall(struct parser *p, struct compiler *compiler)
 		exit(2);
 	}
 
-	struct symbol *s = NULL;
-	size_t i;
-	for (i = 0; i < compiler->symbols.count; ++i) {
-		if (strcmp(compiler->symbols.items[i].name, name.text) == 0) {
-			s = &compiler->symbols.items[i];
-			break;
-		}
-	}
+	struct symbol *s = search_symbol(compiler, name.text);
 	if (s == NULL) {
 		fprintf(stderr, "%s:%d:%d: error: unknown symbol '%s'\n", name.filename, name.line, name.column, name.text);
 		exit(1);
 	}
 	switch (s->kind) {
-		case OURS: printf("\tcall fun_%d\n", (int)i); break;
+		case OURS: printf("\tcall sym_%zu\n", s->id); break;
 		case EXTERNAL: printf("\tcall PLT %s\n", name.text); break;
 	}
 
@@ -386,8 +444,10 @@ bool parse_compund_statement(struct parser *p, struct compiler *compiler)
 	if (!expect_token(p, &open, TOK_CURLY_OPEN))
 		return false;
 
+	enter_scope(compiler);
 	while (parse_statement(p, compiler))
 		;
+	leave_scope(compiler);
 
 	struct token close;
 	if (!expect_token(p, &close, TOK_CURLY_CLOSE)) {
@@ -423,36 +483,27 @@ bool parse_definition(struct parser *p, struct compiler *compiler)
 			exit(2);
 		}
 
-		bool found = false;
-		for (size_t i = 0; i < compiler->symbols.count; ++i) {
-			if (strcmp(compiler->symbols.items[i].name, name.text) == 0) {
-				found = true;
-				break;
-			}
-		}
-		if (found) {
-			fprintf(stderr, "%s:%d:%d: error: redefinition\n", name.filename, name.line, name.column);
-			exit(1);
-		}
+		assert(compiler->nesting == 0);
+		struct symbol fun = define_symbol(compiler, ((struct symbol) { .kind = OURS, .name = name.text }), name);
 
-		da_append(&compiler->symbols, ((struct symbol) { .kind = OURS, .name = name.text }));
-
-		printf("public fun_%d as '%s'\n", (int)compiler->symbols.count-1, name.text);
-		printf("fun_%d:\n", (int)compiler->symbols.count-1);
+		printf("public sym_%zu as '%s'\n", fun.id, name.text);
+		printf("sym_%zu:\n", fun.id);
 		printf("\tpush rbp\n");
 		printf("\tmov rbp, rsp\n");
 
-		if (parse_statement(p, compiler)) {
-			if (strcmp(name.text, "main") == 0) {
-				printf("\tmov rsp, rbp\n");
-				printf("\tpop rbp\n");
-				printf("\txor rax, rax\n");
-				printf("\tret\n");
-			}
-		} else {
+		enter_scope(compiler);
+		if (!parse_statement(p, compiler)) {
 			struct token tok = peek_token(p);
 			fprintf(stderr, "%s:%d:%d: error: expected statement after function definition, got %s\n", tok.filename, tok.line, tok.column, token_short_name(tok));
 			exit(1);
+		}
+		leave_scope(compiler);
+
+		if (strcmp(name.text, "main") == 0) {
+			printf("\tmov rsp, rbp\n");
+			printf("\tpop rbp\n");
+			printf("\txor rax, rax\n");
+			printf("\tret\n");
 		}
 		return true;
 	} else {
