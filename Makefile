@@ -1,14 +1,15 @@
 CFLAGS = -Wall -Wextra -Werror=switch -Werror=implicit-fallthrough -fsanitize=undefined
 
 EXAMPLES = $(wildcard examples/*.b)
+TESTS = $(wildcard tests/*.b)
 
-all: b snap
+all: b
 
-test: b snap
-	./snap
+test: b snap.sh $(TESTS)
+	for test in $(TESTS); do echo $$test; ./snap.sh $$test; done
 
-clean: b snap
-	rm -vf b snap $(EXAMPLES:.b=)
+clean: b
+	rm -vf b $(EXAMPLES:.b=)
 
 examples: $(EXAMPLES:.b=)
 
@@ -21,4 +22,4 @@ examples/%.o: examples/%.asm
 examples/%: examples/%.o
 	$(CC) $< -o $@
 
-.PHONY: all test examples
+.PHONY: all test examples test
