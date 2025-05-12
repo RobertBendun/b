@@ -21,6 +21,46 @@ Long term goals:
 - Create some alternative history C
 - Create self hosted version
 
+## Implementation progress [`b.c`](./b.c)
+
+- [ ] Literals
+    - [x] Character literals
+    - [x] String literals
+    - [x] Decimal integer literals
+    - [ ] Hexadecimal integer literals
+    - [ ] Octal integer literals
+    - [ ] Multicharacter literals
+- [ ] Definitions
+    - [x] Empty function definition
+    - [ ] Functions with arguments
+    - [ ] Global variable definition
+- [ ] Statements
+    - [x] `extrn`
+    - [x] `auto`
+    - [x] `return`
+    - [x] `while`
+    - [x] expression statements
+    - [x] compound statement
+    - [ ] `if`
+    - [ ] `goto`
+    - [ ] `switch`
+    - [ ] `case`
+    - [ ] statement labels
+    - [ ] empty statement
+- [ ] Expressions
+    - [x] Function call
+    - [x] Constant
+    - [ ] Binary operators
+    - [ ] Unary operator
+    - [ ] Dereference
+    - [ ] Address of
+    - [ ] Ternary conditional
+    - [ ] Pre-increment/decrement
+    - [ ] Post-increment/decrement
+    - [ ] Assigment
+    - [ ] Compound assigment
+    - [ ] Index
+
 ## Resources
 
 - [Users' Reference to B](https://www.nokia.com/bell-labs/about/dennis-m-ritchie/kbman.html)
