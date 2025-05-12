@@ -463,7 +463,7 @@ bool parse_compund_statement(struct parser *p, struct compiler *compiler)
 	return true;
 }
 
-bool parse_funccall(struct parser *p, struct compiler *compiler, size_t lvalue, struct symbol *symbol)
+bool parse_funccall(struct parser *p, struct compiler *compiler, size_t target, struct symbol *symbol)
 {
 	struct token open;
 	if (!expect_token(p, &open, TOK_PAREN_OPEN)) {
@@ -500,8 +500,10 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, size_t lvalue, 
 	switch (symbol->kind) {
 		case EXTERNAL: printf("\tcall PLT %s\n", symbol->name); break;
 		case GLOBAL: printf("\tcall sym_%zu\n", symbol->id); break;
-		case LOCAL: printf("\tlea rax, QWORD [rbp-%zu]\n\tcall rax\n", lvalue); break;
+		case LOCAL: printf("\tlea rax, QWORD [rbp-%zu]\n\tcall rax\n", symbol->offset); break;
 	}
+
+	printf("\tmov [rbp-%zu], rax\n", target);
 
 	return true;
 }
