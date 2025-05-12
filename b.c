@@ -663,12 +663,17 @@ bool parse_while(struct parser *p, struct compiler *compiler)
 bool parse_statement(struct parser *p, struct compiler *compiler)
 {
 	if (parse_empty_statement(p)
-		|| parse_compund_statement(p, compiler)
-		|| parse_return(p, compiler)
-		|| parse_extern(p, compiler)
-		|| parse_auto(p, compiler)
-		|| parse_while(p, compiler))
+	|| parse_auto(p, compiler)
+	|| parse_extern(p, compiler)
+	|| parse_compund_statement(p, compiler))
 	{
+		return true;
+	}
+
+	size_t stack_offset = compiler->stack_current_offset;
+
+	if (parse_return(p, compiler) || parse_while(p, compiler)) {
+		compiler->stack_current_offset = stack_offset;
 		return true;
 	}
 
@@ -678,6 +683,7 @@ bool parse_statement(struct parser *p, struct compiler *compiler)
 			fprintf(stderr, "%s:%d:%d: error: expected ; at the end of the statement, got %s\n", semicolon.filename, semicolon.line, semicolon.column, token_short_name(semicolon));
 			exit(2);
 		}
+		compiler->stack_current_offset = stack_offset;
 		return true;
 	}
 
