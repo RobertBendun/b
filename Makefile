@@ -1,4 +1,4 @@
-CFLAGS = -Wall -Wextra -Werror=switch -Werror=implicit-fallthrough -fsanitize=undefined
+CFLAGS += -Wall -Wextra -Werror=switch -Werror=implicit-fallthrough -fsanitize=undefined
 
 EXAMPLES = $(wildcard examples/*.b)
 TESTS = $(wildcard tests/*.b)

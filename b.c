@@ -283,6 +283,7 @@ int main()
 
 #else
 	struct compiler compiler = {
+		.stack_current_offset = 8,
 	};
 
 	struct parser parser = {
@@ -509,10 +510,12 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, size_t target, 
 		exit(2);
 	}
 
+	printf("xor rax, rax\n");
+
 	switch (symbol->kind) {
 		case EXTERNAL: printf("\tcall PLT %s\n", symbol->name); break;
 		case GLOBAL: printf("\tcall sym_%zu\n", symbol->id); break;
-		case LOCAL: printf("\tlea rax, QWORD [rbp-%zu]\n\tcall rax\n", symbol->offset); break;
+		case LOCAL: printf("\tlea r10, QWORD [rbp-%zu]\n\tcall r10\n", symbol->offset); break;
 	}
 
 	printf("\tmov [rbp-%zu], rax\n", target);
