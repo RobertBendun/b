@@ -1,3 +1,5 @@
 main() {
-	return(42);
+	auto a;
+	a = 42;
+	return(a);
 }

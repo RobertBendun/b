@@ -81,6 +81,9 @@ struct token
 		TOK_PAREN_CLOSE = ')',
 		TOK_PAREN_OPEN = '(',
 		TOK_SEMICOLON = ';',
+		TOK_ASSIGN = '=',
+		TOK_COMMA = ',',
+		TOK_PLUS = '+',
 
 		// Make sure that non ascii tokens start after ascii letters
 		TOK_IDENTIFIER = 127,
@@ -133,7 +136,6 @@ static char const* KEYWORDS[] = {
 	[TOK_WHILE]  = "while",
 };
 
-
 struct parser
 {
 	struct tokenizer tokenizer;
@@ -144,10 +146,12 @@ struct symbol
 {
 	enum symbol_kind {
 		EXTERNAL,
-		OURS,
+		GLOBAL,
+		LOCAL,
 	} kind;
 	char const* name;
 	size_t id;
+	size_t offset;
 };
 
 struct symbols
@@ -162,12 +166,30 @@ struct compiler
 	struct symbols symbols[MAX_SCOPE_NESTING];
 	size_t nesting;
 	size_t last_symbol_id;
+	size_t stack_current_offset;
+	size_t stack_capacity;
 
 	struct {
 		char const **items;
 		size_t count, capacity;
 	} defined_externs;
 };
+
+size_t alloc_stack(struct compiler *compiler)
+{
+	if (compiler->stack_capacity == 0) {
+		compiler->stack_capacity = 16;
+		printf("\tsub rsp, %zu\n", compiler->stack_capacity);
+	}
+
+	size_t offset = compiler->stack_current_offset;
+	compiler->stack_current_offset += sizeof(uint64_t);
+	if (compiler->stack_current_offset > compiler->stack_capacity) {
+		printf("add rsp, -%zu\n", compiler->stack_capacity);
+		compiler->stack_capacity *= 2;
+	}
+	return offset;
+}
 
 void enter_scope(struct compiler *compiler)
 {
@@ -313,7 +335,9 @@ bool expect_token(struct parser *p, struct token *tok, enum token_kind kind)
 	return false;
 }
 
-bool parse_return(struct parser *p)
+bool parse_rvalue(struct parser *p, struct compiler *compiler, size_t target);
+
+bool parse_return(struct parser *p, struct compiler *compiler)
 {
 	struct token return_;
 	if (!expect_token(p, &return_, TOK_RETURN)) {
@@ -322,15 +346,16 @@ bool parse_return(struct parser *p)
 
 	struct token open, semicolon;
 	if (expect_token(p, &open, TOK_PAREN_OPEN)) {
-		struct token integer;
-		if (expect_token(p, &integer, TOK_INTEGER)) {
-			printf("\tmov rax, %"PRIu64"\n", integer.ival);
-			printf("\tmov rsp, rbp\n");
-			printf("\tpop rbp\n");
-			printf("\tret\n");
-		} else {
-			assert(0 && "Expression parsing is not supported yet");
+		size_t retval = alloc_stack(compiler);
+
+		if (!parse_rvalue(p, compiler, retval)) {
+			fprintf(stderr, "%s:%d:%d: error: expected rvalue\n", open.filename, open.line, open.column);
+			exit(1);
 		}
+
+		printf("\tmov rax, [rbp-%zu]\n", retval);
+		printf("\tleave\n");
+		printf("\tret\n");
 
 		struct token close;
 		if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
@@ -343,8 +368,7 @@ bool parse_return(struct parser *p)
 			exit(2);
 		}
 	} else if (expect_token(p, &semicolon, TOK_SEMICOLON)) {
-		printf("\tmov rsp, rbp\n");
-		printf("\tpop rbp\n");
+		printf("\tleave\n");
 		printf("\tret\n");
 	} else {
 		fprintf(stderr, "%s:%d:%d: error: return expect ; or (, got %s\n", return_.filename, return_.line, return_.column, token_short_name(semicolon));
@@ -388,47 +412,28 @@ bool parse_extern(struct parser *p, struct compiler *compiler)
 	return true;
 }
 
-
-bool parse_funccall(struct parser *p, struct compiler *compiler)
+bool parse_auto(struct parser *p, struct compiler *compiler)
 {
-	struct token name, open;
-	if (!expect_token(p, &name, TOK_IDENTIFIER)) {
+	struct token auto_;
+	if (!expect_token(p, &auto_, TOK_AUTO)) {
 		return false;
 	}
-	if (!expect_token(p, &open, TOK_PAREN_OPEN)) {
-		fprintf(stderr, "%s:%d:%d: error: expected open paren for funccall, got %s\n", open.filename, open.line, open.column, token_short_name(open));
-		exit(2);
+
+	struct token name;
+	if (expect_token(p, &name, TOK_IDENTIFIER)) {
+		struct symbol s = define_symbol(compiler, (struct symbol) { .name = name.text, .kind = LOCAL, .offset = alloc_stack(compiler) }, name);
+		printf("\t; auto [rbp-%zu] = %s\n", s.offset, name.text);
+
+		struct token semicolon;
+		if (!expect_token(p, &semicolon, TOK_SEMICOLON)) {
+			fprintf(stderr, "%s:%d:%d: error: auto expect ; after closing ), got %s\n", semicolon.filename, semicolon.line, semicolon.column, token_short_name(semicolon));
+			exit(2);
+		}
+		return parse_statement(p, compiler);
+	} else {
+		fprintf(stderr, "%s:%d:%d: error: auto expected identifier, got %s\n", auto_.filename, auto_.line, auto_.column, token_short_name(name));
 	}
 
-	struct token arg;
-	if (expect_token(p, &arg, TOK_CHARACTER)) {
-		printf("\tmov rdi, %"PRIu64"\n", arg.ival);
-	} else if (expect_token(p, &arg, TOK_STRING)) {
-		printf("\tlea rdi, [strend-%zu]\n", string_offset(arg.text));
-	}
-
-	struct token close;
-	if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
-		fprintf(stderr, "%s:%d:%d: error: expected close paren, got %s\n", close.filename, close.line, close.column, token_short_name(close));
-		fprintf(stderr, "%s:%d:%d: note: paren was open here\n", open.filename, open.line, open.column);
-		exit(2);
-	}
-
-	struct symbol *s = search_symbol(compiler, name.text);
-	if (s == NULL) {
-		fprintf(stderr, "%s:%d:%d: error: unknown symbol '%s'\n", name.filename, name.line, name.column, name.text);
-		exit(1);
-	}
-	switch (s->kind) {
-		case OURS: printf("\tcall sym_%zu\n", s->id); break;
-		case EXTERNAL: printf("\tcall PLT %s\n", name.text); break;
-	}
-
-	struct token semicolon;
-	if (!expect_token(p, &semicolon, TOK_SEMICOLON)) {
-		fprintf(stderr, "%s:%d:%d: error: funccall expect ; after closing ), got %s\n", semicolon.filename, semicolon.line, semicolon.column, token_short_name(semicolon));
-		exit(2);
-	}
 	return true;
 }
 
@@ -458,13 +463,159 @@ bool parse_compund_statement(struct parser *p, struct compiler *compiler)
 	return true;
 }
 
+bool parse_funccall(struct parser *p, struct compiler *compiler, size_t lvalue, struct symbol *symbol)
+{
+	struct token open;
+	if (!expect_token(p, &open, TOK_PAREN_OPEN)) {
+		return false;
+	}
+
+	char const* call_registers[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+
+	size_t arg = alloc_stack(compiler);
+	int i = 0;
+	for (; i < ARRAY_LEN(call_registers); ++i) {
+		if (i > 0) {
+			struct token comma;
+			if (!expect_token(p, &comma, TOK_COMMA)) {
+				if (comma.kind == TOK_PAREN_CLOSE) break;
+				fprintf(stderr, "%s:%d:%d: error: expected comma, got %s\n", comma.filename, comma.line, comma.column, token_short_name(comma));
+				exit(2);
+			}
+		}
+
+		if (!parse_rvalue(p, compiler, arg)) {
+			break;
+		}
+		printf("\tmov %s, [rbp-%zu]\n", call_registers[i], arg);
+	}
+
+	struct token close;
+	if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
+		fprintf(stderr, "%s:%d:%d: error: expected close paren, got %s\n", close.filename, close.line, close.column, token_short_name(close));
+		fprintf(stderr, "%s:%d:%d: note: paren was open here\n", open.filename, open.line, open.column);
+		exit(2);
+	}
+
+	switch (symbol->kind) {
+		case EXTERNAL: printf("\tcall PLT %s\n", symbol->name); break;
+		case GLOBAL: printf("\tcall sym_%zu\n", symbol->id); break;
+		case LOCAL: printf("\tlea rax, QWORD [rbp-%zu]\n\tcall rax\n", lvalue); break;
+	}
+
+	return true;
+}
+
+bool parse_assign(struct parser *p, struct compiler *compiler, size_t lvalue)
+{
+	struct token assign;
+	if (!expect_token(p, &assign, TOK_ASSIGN))
+		return false;
+
+	return parse_rvalue(p, compiler, lvalue);
+}
+
+bool parse_lvalue(struct parser *p, struct compiler *compiler, size_t lvalue, struct symbol **symbol)
+{
+	// TODO: Implement dereference and indexing
+	struct token name;
+	if (!expect_token(p, &name, TOK_IDENTIFIER)) {
+		return false;
+	}
+	*symbol = search_symbol(compiler, name.text);
+	if (!*symbol) {
+		fprintf(stderr, "%s:%d:%d: error: '%s' has not been defined yet\n", name.filename, name.line, name.column, name.text);
+		exit(1);
+	}
+	return true;
+}
+
+bool parse_constant(struct parser *p, struct compiler *compiler, size_t target)
+{
+	struct token constant;
+	if (expect_token(p, &constant, TOK_INTEGER)) {
+		printf("\tmov QWORD [rbp-%zu], %"PRIu64"\n", target, constant.ival);
+		return true;
+	}
+	if (expect_token(p, &constant, TOK_CHARACTER)) {
+		printf("\tmov QWORD [rbp-%zu], %"PRIu64"\n", target, constant.ival);
+		return true;
+	}
+	if (expect_token(p, &constant, TOK_STRING)) {
+		printf("\tlea rax, [strend-%zu]\n", string_offset(constant.text));
+		printf("\tmov [rbp-%zu], rax\n", target);
+		return true;
+	}
+
+	return false;
+}
+
+bool maybe_parse_addition(struct parser *p, struct compiler *compiler, size_t target)
+{
+	struct token plus;
+	if (!expect_token(p, &plus, TOK_PLUS)) {
+		return true;
+	}
+
+	size_t tmp = alloc_stack(compiler);
+
+	if (!parse_rvalue(p, compiler, tmp)) {
+		fprintf(stderr, "%s:%d:%d: expected rvalue on the right of +\n", plus.filename, plus.line, plus.column);
+		exit(1);
+	}
+
+	printf("\tmov rax, [rbp-%zu]\n", target);
+	printf("\tadd rax, [rbp-%zu]\n", tmp);
+	printf("\tmov [rbp-%zu], rax\n", target);
+	return true;
+}
+
+bool parse_rvalue(struct parser *p, struct compiler *compiler, size_t target)
+{
+	struct symbol *symbol;
+
+	if (parse_constant(p, compiler, target)) {
+		return maybe_parse_addition(p, compiler, target);
+	}
+
+	if (!parse_lvalue(p, compiler, target, &symbol)) {
+		return false;
+	}
+
+	if (parse_funccall(p, compiler, target, symbol))
+		return true;
+
+	assert(symbol->kind == LOCAL && "external or global symbols are only supported by function calls for now");
+
+	if (parse_assign(p,compiler, symbol->offset)) {
+		return true;
+	}
+
+	printf("\tmov rax, [rbp-%zu]\n\tmov [rbp-%zu], rax\n", symbol->offset, target);
+	return maybe_parse_addition(p, compiler, target);
+}
+
 bool parse_statement(struct parser *p, struct compiler *compiler)
 {
-	return parse_empty_statement(p)
+	if (parse_empty_statement(p)
 		|| parse_compund_statement(p, compiler)
-		|| parse_return(p)
+		|| parse_return(p, compiler)
 		|| parse_extern(p, compiler)
-		|| parse_funccall(p, compiler);
+		|| parse_auto(p, compiler))
+	{
+		return true;
+	}
+
+	if (parse_rvalue(p, compiler, alloc_stack(compiler))) {
+		struct token semicolon;
+		if (!expect_token(p, &semicolon, TOK_SEMICOLON)) {
+			fprintf(stderr, "%s:%d:%d: error: expected ; at the end of the statement, got %s\n", semicolon.filename, semicolon.line, semicolon.column, token_short_name(semicolon));
+			exit(2);
+		}
+		return true;
+	}
+
+	return false;
 }
 
 bool parse_definition(struct parser *p, struct compiler *compiler)
@@ -484,7 +635,7 @@ bool parse_definition(struct parser *p, struct compiler *compiler)
 		}
 
 		assert(compiler->nesting == 0);
-		struct symbol fun = define_symbol(compiler, ((struct symbol) { .kind = OURS, .name = name.text }), name);
+		struct symbol fun = define_symbol(compiler, ((struct symbol) { .kind = GLOBAL, .name = name.text }), name);
 
 		printf("public sym_%zu as '%s'\n", fun.id, name.text);
 		printf("sym_%zu:\n", fun.id);
@@ -500,8 +651,7 @@ bool parse_definition(struct parser *p, struct compiler *compiler)
 		leave_scope(compiler);
 
 		if (strcmp(name.text, "main") == 0) {
-			printf("\tmov rsp, rbp\n");
-			printf("\tpop rbp\n");
+			printf("\tleave\n");
 			printf("\txor rax, rax\n");
 			printf("\tret\n");
 		}
@@ -520,6 +670,7 @@ void parse_program(struct parser *p, struct compiler *compiler)
 char const* token_short_name(struct token tok)
 {
 	switch (tok.kind) {
+	case TOK_COMMA: return ",";
 	case TOK_EOF: return "end of file";
 	case TOK_IDENTIFIER: return "identifier";
 	case TOK_INTEGER: return "integer literal";
@@ -531,6 +682,8 @@ char const* token_short_name(struct token tok)
 	case TOK_PAREN_CLOSE: return ")";
 	case TOK_PAREN_OPEN: return "(";
 	case TOK_SEMICOLON: return ";";
+	case TOK_ASSIGN: return "=";
+	case TOK_PLUS: return "+";
 	case TOK_AUTO: return "auto keyword";
 	case TOK_CASE: return "case keyword";
 	case TOK_ELSE: return "else keyword";
@@ -582,6 +735,7 @@ void dump_token(FILE *out, struct token tok)
 		fprintf(out, "%s\n", KEYWORDS[tok.kind]);
 		break;
 
+	case TOK_COMMA:
 	case TOK_CURLY_CLOSE:
 	case TOK_CURLY_OPEN:
 	case TOK_DIV:
@@ -589,6 +743,8 @@ void dump_token(FILE *out, struct token tok)
 	case TOK_PAREN_CLOSE:
 	case TOK_PAREN_OPEN:
 	case TOK_SEMICOLON:
+	case TOK_ASSIGN:
+	case TOK_PLUS:
 		fprintf(out, "%c\n", tok.kind);
 		break;
 	}
@@ -633,6 +789,9 @@ again:
 	ASCII(TOK_PAREN_CLOSE);
 	ASCII(TOK_PAREN_OPEN);
 	ASCII(TOK_SEMICOLON);
+	ASCII(TOK_ASSIGN);
+	ASCII(TOK_COMMA);
+	ASCII(TOK_PLUS);
 #undef ASCII
 
 	case '/':

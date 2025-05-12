@@ -26,7 +26,7 @@ if ./b <"$1" >"${asm_path}" 2>"${com_stderr}"; then
 	exit_code="$?"
 
 	if ! diff -N "${run_stdout}" "$1.run_stdout"; then exit 1; fi
-	if ! diff -N "${run_stderr}" "$1.run_stdout"; then exit 1; fi
+	if ! diff -N "${run_stderr}" "$1.run_stderr"; then exit 1; fi
 	if [ -f "$1.exit_code" ]; then
 		if ! echo "${exit_code}" | diff - "$1.exit_code"; then exit 1; fi
 	elif [ "${exit_code}" -ne 0 ]; then
