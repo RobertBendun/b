@@ -154,20 +154,24 @@ struct symbol
 	size_t offset;
 };
 
-struct symbols
+struct scope
 {
 	struct symbol *items;
 	size_t capacity, count;
+
+	size_t stack_capacity;
+	size_t stack_offset;
 };
 
 struct compiler
 {
 #define MAX_SCOPE_NESTING 64
-	struct symbols symbols[MAX_SCOPE_NESTING];
+	struct scope scope[MAX_SCOPE_NESTING];
 	size_t nesting;
 	size_t last_symbol_id;
 	size_t stack_current_offset;
 	size_t stack_capacity;
+	size_t last_local_id;
 
 	struct {
 		char const **items;
@@ -185,7 +189,7 @@ size_t alloc_stack(struct compiler *compiler)
 	size_t offset = compiler->stack_current_offset;
 	compiler->stack_current_offset += sizeof(uint64_t);
 	if (compiler->stack_current_offset > compiler->stack_capacity) {
-		printf("add rsp, -%zu\n", compiler->stack_capacity);
+		printf("\tadd rsp, -%zu\n", compiler->stack_capacity);
 		compiler->stack_capacity *= 2;
 	}
 	return offset;
@@ -195,18 +199,26 @@ void enter_scope(struct compiler *compiler)
 {
 	++compiler->nesting;
 	assert(compiler->nesting < MAX_SCOPE_NESTING);
-	compiler->symbols[compiler->nesting].count = 0;
+	compiler->scope[compiler->nesting].count = 0;
+	compiler->scope[compiler->nesting].stack_capacity = compiler->stack_capacity;
+	compiler->scope[compiler->nesting].stack_offset = compiler->stack_current_offset;
 }
 
 void leave_scope(struct compiler *compiler)
 {
 	assert(compiler->nesting > 0 && "Trying to leave when in global scope");
+	size_t prev_capacity = compiler->scope[compiler->nesting].stack_capacity;
+	if (compiler->stack_capacity > prev_capacity) {
+		printf("\tadd rsp, %zu\n", compiler->stack_capacity - prev_capacity);
+		compiler->stack_capacity = prev_capacity;
+	}
+	compiler->stack_current_offset = compiler->scope[compiler->nesting].stack_offset;
 	--compiler->nesting;
 }
 
 struct symbol* search_symbol_in_scope(struct compiler *compiler, char const* identifier)
 {
-	struct symbols scope = compiler->symbols[compiler->nesting];
+	struct scope scope = compiler->scope[compiler->nesting];
 	for (size_t i = 0; i < scope.count; ++i) {
 		if (strcmp(scope.items[i].name, identifier) == 0)
 			return &scope.items[i];
@@ -217,7 +229,7 @@ struct symbol* search_symbol_in_scope(struct compiler *compiler, char const* ide
 struct symbol* search_symbol(struct compiler *compiler, char const* identifier)
 {
 	for (int level = compiler->nesting; level >= 0; --level) {
-		struct symbols scope = compiler->symbols[level];
+		struct scope scope = compiler->scope[level];
 		for (size_t i = 0; i < scope.count; ++i) {
 			if (strcmp(scope.items[i].name, identifier) == 0)
 				return &scope.items[i];
@@ -237,7 +249,7 @@ struct symbol define_symbol(struct compiler *compiler, struct symbol symbol, str
 	++compiler->last_symbol_id;
 	assert(compiler->last_symbol_id > 0);
 	symbol.id = compiler->last_symbol_id;
-	da_append(&compiler->symbols[compiler->nesting], symbol);
+	da_append(&compiler->scope[compiler->nesting], symbol);
 	return symbol;
 }
 
@@ -473,8 +485,8 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, size_t target, 
 	char const* call_registers[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
 
 	size_t arg = alloc_stack(compiler);
-	int i = 0;
-	for (; i < ARRAY_LEN(call_registers); ++i) {
+
+	for (size_t i = 0; i < ARRAY_LEN(call_registers); ++i) {
 		if (i > 0) {
 			struct token comma;
 			if (!expect_token(p, &comma, TOK_COMMA)) {
@@ -517,7 +529,7 @@ bool parse_assign(struct parser *p, struct compiler *compiler, size_t lvalue)
 	return parse_rvalue(p, compiler, lvalue);
 }
 
-bool parse_lvalue(struct parser *p, struct compiler *compiler, size_t lvalue, struct symbol **symbol)
+bool parse_lvalue(struct parser *p, struct compiler *compiler, struct symbol **symbol)
 {
 	// TODO: Implement dereference and indexing
 	struct token name;
@@ -534,6 +546,7 @@ bool parse_lvalue(struct parser *p, struct compiler *compiler, size_t lvalue, st
 
 bool parse_constant(struct parser *p, struct compiler *compiler, size_t target)
 {
+	(void)compiler;
 	struct token constant;
 	if (expect_token(p, &constant, TOK_INTEGER)) {
 		printf("\tmov QWORD [rbp-%zu], %"PRIu64"\n", target, constant.ival);
@@ -552,23 +565,22 @@ bool parse_constant(struct parser *p, struct compiler *compiler, size_t target)
 	return false;
 }
 
-bool maybe_parse_addition(struct parser *p, struct compiler *compiler, size_t target)
+bool maybe_parse_addition_or_subtraction(struct parser *p, struct compiler *compiler, size_t target)
 {
-	struct token plus;
-	if (!expect_token(p, &plus, TOK_PLUS)) {
-		return true;
+	struct token op;
+	if (expect_token(p, &op, TOK_PLUS) || expect_token(p, &op, TOK_MINUS)) {
+		size_t tmp = alloc_stack(compiler);
+
+		if (!parse_rvalue(p, compiler, tmp)) {
+			fprintf(stderr, "%s:%d:%d: expected rvalue on the right of %s\n", op.filename, op.line, op.column, token_short_name(op));
+			exit(1);
+		}
+
+		printf("\tmov rax, [rbp-%zu]\n", target);
+		printf("\t%s rax, [rbp-%zu]\n", op.kind == TOK_PLUS ? "add" : "sub", tmp);
+		printf("\tmov [rbp-%zu], rax\n", target);
 	}
 
-	size_t tmp = alloc_stack(compiler);
-
-	if (!parse_rvalue(p, compiler, tmp)) {
-		fprintf(stderr, "%s:%d:%d: expected rvalue on the right of +\n", plus.filename, plus.line, plus.column);
-		exit(1);
-	}
-
-	printf("\tmov rax, [rbp-%zu]\n", target);
-	printf("\tadd rax, [rbp-%zu]\n", tmp);
-	printf("\tmov [rbp-%zu], rax\n", target);
 	return true;
 }
 
@@ -577,10 +589,10 @@ bool parse_rvalue(struct parser *p, struct compiler *compiler, size_t target)
 	struct symbol *symbol;
 
 	if (parse_constant(p, compiler, target)) {
-		return maybe_parse_addition(p, compiler, target);
+		return maybe_parse_addition_or_subtraction(p, compiler, target);
 	}
 
-	if (!parse_lvalue(p, compiler, target, &symbol)) {
+	if (!parse_lvalue(p, compiler, &symbol)) {
 		return false;
 	}
 
@@ -594,7 +606,58 @@ bool parse_rvalue(struct parser *p, struct compiler *compiler, size_t target)
 	}
 
 	printf("\tmov rax, [rbp-%zu]\n\tmov [rbp-%zu], rax\n", symbol->offset, target);
-	return maybe_parse_addition(p, compiler, target);
+	return maybe_parse_addition_or_subtraction(p, compiler, target);
+}
+
+bool parse_while(struct parser *p, struct compiler *compiler)
+{
+	struct token while_;
+	if (!expect_token(p, &while_, TOK_WHILE)) {
+		return false;
+	}
+
+	struct token open;
+	if (!expect_token(p, &open, TOK_PAREN_OPEN)) {
+		fprintf(stderr, "%s:%d:%d: error: expected open paren after while, got %s\n", open.filename, open.line, open.column, token_short_name(open));
+		exit(2);
+	}
+
+
+	size_t cond = alloc_stack(compiler);
+
+	enter_scope(compiler);
+
+	size_t loop_again = compiler->last_local_id++;
+	size_t loop_exit = compiler->last_local_id++;
+
+	printf(".local_%zu:\n", loop_again);
+
+	if (!parse_rvalue(p, compiler, cond)) {
+		fprintf(stderr, "%s:%d:%d: error: expected condition inside while loop\n", open.filename, open.line, open.column);
+		exit(2);
+	}
+
+	printf("\tmov rax, [rbp-%zu]\n", cond);
+	printf("\tcmp rax, 0\n");
+	printf("\tje .local_%zu\n", loop_exit);
+
+	struct token close;
+	if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
+		fprintf(stderr, "%s:%d:%d: error: expected close paren, got %s\n", close.filename, close.line, close.column, token_short_name(close));
+		fprintf(stderr, "%s:%d:%d: note: paren was open here\n", open.filename, open.line, open.column);
+		exit(2);
+	}
+
+	if (!parse_statement(p, compiler)) {
+		fprintf(stderr, "%s:%d:%d: error: expected statement after while\n", close.filename, close.line, close.column);
+		exit(2);
+	}
+	leave_scope(compiler);
+	printf("\tjmp .local_%zu\n", loop_again);
+	printf(".local_%zu:\n", loop_exit);
+
+
+	return true;
 }
 
 bool parse_statement(struct parser *p, struct compiler *compiler)
@@ -603,7 +666,8 @@ bool parse_statement(struct parser *p, struct compiler *compiler)
 		|| parse_compund_statement(p, compiler)
 		|| parse_return(p, compiler)
 		|| parse_extern(p, compiler)
-		|| parse_auto(p, compiler))
+		|| parse_auto(p, compiler)
+		|| parse_while(p, compiler))
 	{
 		return true;
 	}

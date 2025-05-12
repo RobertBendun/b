@@ -1,7 +1,6 @@
-/* TODO: Support either loops or tail recursion */
-main() {
-	extrn putchar;
-	putchar('y');
-	putchar('*n');
-	main();
-}
+main()
+	extrn printf;
+		while (1)
+			printf("y*n");
+
+
