@@ -85,6 +85,7 @@ struct token
 		TOK_COMMA = ',',
 		TOK_PLUS = '+',
 		TOK_ASTERISK = '*',
+		TOK_LESS = '<',
 
 		// Make sure that non ascii tokens start after ascii letters
 		TOK_IDENTIFIER = 127,
@@ -496,9 +497,10 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, size_t target, 
 	}
 
 	char const* call_registers[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+	size_t args[ARRAY_LEN(call_registers)];
+	size_t args_count = 0;
 
-	size_t arg = alloc_stack(compiler);
-
+	// TODO: This code is awful, we _need_ register allocation to fix it
 	for (size_t i = 0; i < ARRAY_LEN(call_registers); ++i) {
 		if (i > 0) {
 			struct token comma;
@@ -509,11 +511,16 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, size_t target, 
 			}
 		}
 
+		size_t arg = args[args_count++] = alloc_stack(compiler);
 		if (!parse_expression(p, compiler, arg)) {
 			break;
 		}
-		printf("\tmov %s, [rbp-%zu]\n", call_registers[i], arg);
 	}
+
+	for (size_t i = 0; i < args_count; ++i) {
+		printf("\tmov %s, [rbp-%zu]\n", call_registers[i], args[i]);
+	}
+
 
 	struct token close;
 	if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
@@ -629,6 +636,9 @@ size_t precedense(enum token_kind kind)
 	case TOK_ASSIGN:
 		return 100;
 
+	case TOK_LESS:
+		return 200;
+
 	case TOK_PLUS:
 	case TOK_MINUS:
 		return 300;
@@ -668,6 +678,14 @@ void emit_op(struct compiler *compiler, size_t lhs, enum token_kind op, size_t r
 		printf("\tmov rax, [rbp-%zu]\n",  lhs);
 		printf("\timul rax, [rbp-%zu]\n", rhs);
 		printf("\tmov [rbp-%zu], rax\n",  lhs);
+		return;
+
+	case TOK_LESS:
+		printf("\txor rcx, rcx\n");
+		printf("\tmov rax, [rbp-%zu]\n", lhs);
+		printf("\tcmp rax, [rbp-%zu]\n", rhs);
+		printf("\tsetl cl\n");
+		printf("\tmov [rbp-%zu], rcx\n", lhs);
 		return;
 
 	default:
@@ -901,6 +919,7 @@ char const* token_short_name(struct token tok)
 	case TOK_SEMICOLON: return ";";
 	case TOK_ASSIGN: return "=";
 	case TOK_PLUS: return "+";
+	case TOK_LESS: return "<";
 	case TOK_AUTO: return "auto keyword";
 	case TOK_CASE: return "case keyword";
 	case TOK_ELSE: return "else keyword";
@@ -963,6 +982,7 @@ void dump_token(FILE *out, struct token tok)
 	case TOK_ASSIGN:
 	case TOK_PLUS:
 	case TOK_ASTERISK:
+	case TOK_LESS:
 		fprintf(out, "%c\n", tok.kind);
 		break;
 	}
@@ -1011,6 +1031,7 @@ again:
 	ASCII(TOK_COMMA);
 	ASCII(TOK_PLUS);
 	ASCII(TOK_ASTERISK);
+	ASCII(TOK_LESS);
 #undef ASCII
 
 	case '/':
