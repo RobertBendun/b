@@ -529,7 +529,7 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, size_t target, 
 		exit(2);
 	}
 
-	printf("xor rax, rax\n");
+	printf("\txor rax, rax\n");
 
 	switch (symbol->kind) {
 		case EXTERNAL: printf("\tcall PLT %s\n", symbol->name); break;
