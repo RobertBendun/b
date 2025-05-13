@@ -84,6 +84,7 @@ struct token
 		TOK_ASSIGN = '=',
 		TOK_COMMA = ',',
 		TOK_PLUS = '+',
+		TOK_ASTERISK = '*',
 
 		// Make sure that non ascii tokens start after ascii letters
 		TOK_IDENTIFIER = 127,
@@ -348,7 +349,18 @@ bool expect_token(struct parser *p, struct token *tok, enum token_kind kind)
 	return false;
 }
 
-bool parse_rvalue(struct parser *p, struct compiler *compiler, size_t target);
+bool expect_token_if(struct parser *p, struct token *tok, bool(*predicate)(enum token_kind))
+{
+	*tok = get_token(p);
+	if (predicate(tok->kind)) {
+		return true;
+	}
+	putback_token(p, *tok);
+	return false;
+}
+
+bool parse_expression(struct parser *p, struct compiler *compiler, size_t target);
+bool parse_atomic(struct parser *p, struct compiler *compiler, size_t target);
 
 bool parse_return(struct parser *p, struct compiler *compiler)
 {
@@ -361,7 +373,7 @@ bool parse_return(struct parser *p, struct compiler *compiler)
 	if (expect_token(p, &open, TOK_PAREN_OPEN)) {
 		size_t retval = alloc_stack(compiler);
 
-		if (!parse_rvalue(p, compiler, retval)) {
+		if (!parse_expression(p, compiler, retval)) {
 			fprintf(stderr, "%s:%d:%d: error: expected rvalue\n", open.filename, open.line, open.column);
 			exit(1);
 		}
@@ -497,7 +509,7 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, size_t target, 
 			}
 		}
 
-		if (!parse_rvalue(p, compiler, arg)) {
+		if (!parse_expression(p, compiler, arg)) {
 			break;
 		}
 		printf("\tmov %s, [rbp-%zu]\n", call_registers[i], arg);
@@ -529,7 +541,7 @@ bool parse_assign(struct parser *p, struct compiler *compiler, size_t lvalue)
 	if (!expect_token(p, &assign, TOK_ASSIGN))
 		return false;
 
-	return parse_rvalue(p, compiler, lvalue);
+	return parse_expression(p, compiler, lvalue);
 }
 
 bool parse_lvalue(struct parser *p, struct compiler *compiler, struct symbol **symbol)
@@ -568,13 +580,14 @@ bool parse_constant(struct parser *p, struct compiler *compiler, size_t target)
 	return false;
 }
 
+#if 0
 bool maybe_parse_addition_or_subtraction(struct parser *p, struct compiler *compiler, size_t target)
 {
 	struct token op;
 	if (expect_token(p, &op, TOK_PLUS) || expect_token(p, &op, TOK_MINUS)) {
 		size_t tmp = alloc_stack(compiler);
 
-		if (!parse_rvalue(p, compiler, tmp)) {
+		if (!parse_(p, compiler, tmp)) {
 			fprintf(stderr, "%s:%d:%d: expected rvalue on the right of %s\n", op.filename, op.line, op.column, token_short_name(op));
 			exit(1);
 		}
@@ -587,12 +600,126 @@ bool maybe_parse_addition_or_subtraction(struct parser *p, struct compiler *comp
 	return true;
 }
 
-bool parse_rvalue(struct parser *p, struct compiler *compiler, size_t target)
+bool maybe_parse_multiplication(struct parser *p, struct compiler *compiler, size_t target)
+{
+	maybe_parse_addition_or_subtraction(p, compiler, target);
+
+	struct token op;
+	if (expect_token(p, &op, TOK_ASTERISK)) {
+		size_t tmp = alloc_stack(compiler);
+
+		if (!parse_rvalue(p, compiler, tmp)) {
+			fprintf(stderr, "%s:%d:%d: expected rvalue on the right of %s\n", op.filename, op.line, op.column, token_short_name(op));
+			exit(1);
+		}
+
+		printf("\tmov rax, [rbp-%zu]\n", target);
+		printf("\timul rax, [rbp-%zu]\n", tmp);
+		printf("\tmov [rbp-%zu], rax\n", target);
+	}
+	return true;
+}
+#endif
+
+
+size_t precedense(enum token_kind kind)
+{
+	// TODO: Static checking for this switch
+	switch (kind) {
+	case TOK_ASSIGN:
+		return 100;
+
+	case TOK_PLUS:
+	case TOK_MINUS:
+		return 300;
+
+	case TOK_DIV:
+	case TOK_ASTERISK:
+		return 400;
+
+	default:
+		return 0;
+	}
+}
+
+bool is_operator(enum token_kind kind)
+{
+	return precedense(kind) != 0;
+}
+
+void emit_op(struct compiler *compiler, size_t lhs, enum token_kind op, size_t rhs)
+{
+	(void)compiler;
+	// TODO: Static checking for this switch
+	switch (op) {
+	case TOK_PLUS:
+		printf("\tmov rax, [rbp-%zu]\n", lhs);
+		printf("\tadd rax, [rbp-%zu]\n", rhs);
+		printf("\tmov [rbp-%zu], rax\n", lhs);
+		return;
+
+	case TOK_MINUS:
+		printf("\tmov rax, [rbp-%zu]\n", lhs);
+		printf("\tsub rax, [rbp-%zu]\n", rhs);
+		printf("\tmov [rbp-%zu], rax\n", lhs);
+		return;
+
+	case TOK_ASTERISK:
+		printf("\tmov rax, [rbp-%zu]\n",  lhs);
+		printf("\timul rax, [rbp-%zu]\n", rhs);
+		printf("\tmov [rbp-%zu], rax\n",  lhs);
+		return;
+
+	default:
+		assert(0 && "math not implemented yet");
+	}
+}
+
+void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, size_t lhs)
+{
+	// TODO: See if we can get away without allocating this varibale
+	size_t rhs = alloc_stack(compiler);
+	if (!parse_atomic(p, compiler, rhs)) {
+		assert(0 && "report an error");
+	}
+
+	struct token next;
+	if (!expect_token_if(p, &next, is_operator)) {
+		emit_op(compiler, lhs, op.kind, rhs);
+		return;
+	}
+
+	// For expression a op b next c, op has higher precedense then next so we
+	// should parse as (a op b) next c
+	if (precedense(op.kind) >= precedense(next.kind)) {
+		emit_op(compiler, lhs, op.kind, rhs);
+		parse_rhs(p, compiler, next, lhs);
+		return;
+	}
+
+	// Otherwise we should parse as a op (b next c)
+	parse_rhs(p, compiler, next, rhs);
+	emit_op(compiler, lhs, op.kind, rhs);
+	return;
+}
+
+bool maybe_parse_infix(struct parser *p, struct compiler *compiler, size_t target)
+{
+	struct token op;
+	if (!expect_token_if(p, &op, is_operator)) {
+		return true;
+	}
+	parse_rhs(p, compiler, op, target);;
+	return true;
+}
+
+
+bool parse_atomic(struct parser *p, struct compiler *compiler, size_t target)
 {
 	struct symbol *symbol;
 
 	if (parse_constant(p, compiler, target)) {
-		return maybe_parse_addition_or_subtraction(p, compiler, target);
+		return true;
 	}
 
 	if (!parse_lvalue(p, compiler, &symbol)) {
@@ -609,8 +736,17 @@ bool parse_rvalue(struct parser *p, struct compiler *compiler, size_t target)
 	}
 
 	printf("\tmov rax, [rbp-%zu]\n\tmov [rbp-%zu], rax\n", symbol->offset, target);
-	return maybe_parse_addition_or_subtraction(p, compiler, target);
+	return true;
 }
+
+bool parse_expression(struct parser *p, struct compiler *compiler, size_t target)
+{
+	if (parse_atomic(p, compiler, target)) {
+		return maybe_parse_infix(p, compiler, target);
+	}
+	return false;
+}
+
 
 bool parse_while(struct parser *p, struct compiler *compiler)
 {
@@ -635,7 +771,7 @@ bool parse_while(struct parser *p, struct compiler *compiler)
 
 	printf(".local_%zu:\n", loop_again);
 
-	if (!parse_rvalue(p, compiler, cond)) {
+	if (!parse_expression(p, compiler, cond)) {
 		fprintf(stderr, "%s:%d:%d: error: expected condition inside while loop\n", open.filename, open.line, open.column);
 		exit(2);
 	}
@@ -680,7 +816,7 @@ bool parse_statement(struct parser *p, struct compiler *compiler)
 		return true;
 	}
 
-	if (parse_rvalue(p, compiler, alloc_stack(compiler))) {
+	if (parse_expression(p, compiler, alloc_stack(compiler))) {
 		struct token semicolon;
 		if (!expect_token(p, &semicolon, TOK_SEMICOLON)) {
 			fprintf(stderr, "%s:%d:%d: error: expected ; at the end of the statement, got %s\n", semicolon.filename, semicolon.line, semicolon.column, token_short_name(semicolon));
@@ -739,7 +875,12 @@ bool parse_definition(struct parser *p, struct compiler *compiler)
 void parse_program(struct parser *p, struct compiler *compiler)
 {
 	while (parse_definition(p, compiler)) {}
-	assert(peek_token(p).kind == TOK_EOF);
+
+	struct token next = peek_token(p);
+	if (next.kind != TOK_EOF) {
+		fprintf(stderr, "%s:%d:%d: error: stray '%s' at the end of the program\n", next.filename, next.line, next.column, token_short_name(next));
+		exit(1);
+	}
 }
 
 char const* token_short_name(struct token tok)
@@ -754,6 +895,7 @@ char const* token_short_name(struct token tok)
 	case TOK_CURLY_OPEN: return "{";
 	case TOK_DIV: return "/";
 	case TOK_MINUS: return "-";
+	case TOK_ASTERISK: return "*";
 	case TOK_PAREN_CLOSE: return ")";
 	case TOK_PAREN_OPEN: return "(";
 	case TOK_SEMICOLON: return ";";
@@ -820,6 +962,7 @@ void dump_token(FILE *out, struct token tok)
 	case TOK_SEMICOLON:
 	case TOK_ASSIGN:
 	case TOK_PLUS:
+	case TOK_ASTERISK:
 		fprintf(out, "%c\n", tok.kind);
 		break;
 	}
@@ -867,6 +1010,7 @@ again:
 	ASCII(TOK_ASSIGN);
 	ASCII(TOK_COMMA);
 	ASCII(TOK_PLUS);
+	ASCII(TOK_ASTERISK);
 #undef ASCII
 
 	case '/':
