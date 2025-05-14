@@ -50,12 +50,26 @@ Long term goals:
     - [x] Function call
     - [x] Constant
     - [ ] Binary operators
+        - [x] Additive operators: `+ -`
+        - [ ] Shift operators: `<< >>`
+        - [ ] Bitwise operators: `& ^ |`
+        - [ ] Multiplicative operators: `* / %`
+        - [ ] Relational operatos: `< > <= >= == !=`
+        - [ ] Logical (short circuting): `&& ||`
+        - [ ] Ternary: `?:`
+        - [ ] Assigment `=`
+        - [ ] Compound assigment `op=`
     - [ ] Unary operators
+        - [ ] Bitwise complement: `~`
+        - [ ] Negation: `-`
+        - [ ] Logical Not: `!`
+        - [ ] Indirection: `*`
+        - [ ] Address of: `&`
+        - [ ] Pre-increment/decrement
+        - [ ] Post-increment/decrement
     - [ ] Dereference
     - [ ] Address of
     - [ ] Ternary conditional
-    - [ ] Assigment
-    - [ ] Compound assigment
     - [ ] Index
 
 ## Resources
