@@ -1,9 +1,6 @@
 main() {
 	extrn printf;
-	auto a;
-	auto b;
-	auto i;
-	auto t;
+	auto a, b, i, t;
 
 	a = 1;
 	b = 0;

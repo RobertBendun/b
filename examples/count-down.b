@@ -1,7 +1,6 @@
 main() {
 	auto a;
-	extrn printf;
-	extrn sleep;
+	extrn printf, sleep;
 
 	a = 10;
 	while (a) {

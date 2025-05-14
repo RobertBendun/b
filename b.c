@@ -410,8 +410,13 @@ bool parse_extern(struct parser *p, struct compiler *compiler)
 		return false;
 	}
 
-	struct token name;
-	if (expect_token(p, &name, TOK_IDENTIFIER)) {
+	for (;;) {
+		struct token name;
+		if (!expect_token(p, &name, TOK_IDENTIFIER)) {
+			fprintf(stderr, "%s:%d:%d: error: extrn expected identifier, got %s\n", extrn.filename, extrn.line, extrn.column, token_short_name(name));
+			exit(1);
+		}
+
 		define_symbol(compiler, (struct symbol) { .name = name.text, .kind = EXTERNAL }, name);
 
 		bool found = false;
@@ -425,17 +430,19 @@ bool parse_extern(struct parser *p, struct compiler *compiler)
 			printf("\textrn %s\n", name.text);
 			da_append(&compiler->defined_externs, name.text);
 		}
-		struct token semicolon;
-		if (!expect_token(p, &semicolon, TOK_SEMICOLON)) {
-			fprintf(stderr, "%s:%d:%d: error: extrn expect ; after closing ), got %s\n", semicolon.filename, semicolon.line, semicolon.column, token_short_name(semicolon));
+
+		struct token semicolon, comma;
+		if (expect_token(p, &semicolon, TOK_SEMICOLON)) {
+			break;
+		} else if (expect_token(p, &comma, TOK_COMMA)) {
+			continue;
+		} else {
+			fprintf(stderr, "%s:%d:%d: error: extrn expected ; or comma, got %s\n", semicolon.filename, semicolon.line, semicolon.column, token_short_name(semicolon));
 			exit(2);
 		}
-		return parse_statement(p, compiler);
-	} else {
-		fprintf(stderr, "%s:%d:%d: error: extrn expected identifier, got %s\n", extrn.filename, extrn.line, extrn.column, token_short_name(name));
 	}
 
-	return true;
+	return parse_statement(p, compiler);
 }
 
 bool parse_auto(struct parser *p, struct compiler *compiler)
@@ -445,22 +452,28 @@ bool parse_auto(struct parser *p, struct compiler *compiler)
 		return false;
 	}
 
-	struct token name;
-	if (expect_token(p, &name, TOK_IDENTIFIER)) {
+	for (;;) {
+		struct token name;
+		if (!expect_token(p, &name, TOK_IDENTIFIER)) {
+			fprintf(stderr, "%s:%d:%d: error: auto expected identifier, got %s\n", auto_.filename, auto_.line, auto_.column, token_short_name(name));
+			exit(1);
+		}
+
 		struct symbol s = define_symbol(compiler, (struct symbol) { .name = name.text, .kind = LOCAL, .offset = alloc_stack(compiler) }, name);
 		printf("\t; auto [rbp-%zu] = %s\n", s.offset, name.text);
 
-		struct token semicolon;
-		if (!expect_token(p, &semicolon, TOK_SEMICOLON)) {
-			fprintf(stderr, "%s:%d:%d: error: auto expect ; after closing ), got %s\n", semicolon.filename, semicolon.line, semicolon.column, token_short_name(semicolon));
+		struct token semicolon, comma;
+		if (expect_token(p, &semicolon, TOK_SEMICOLON)) {
+			break;
+		} else if (expect_token(p, &comma, TOK_COMMA)) {
+			continue;
+		} else {
+			fprintf(stderr, "%s:%d:%d: error: auto expected ; or comma, got %s\n", semicolon.filename, semicolon.line, semicolon.column, token_short_name(semicolon));
 			exit(2);
 		}
-		return parse_statement(p, compiler);
-	} else {
-		fprintf(stderr, "%s:%d:%d: error: auto expected identifier, got %s\n", auto_.filename, auto_.line, auto_.column, token_short_name(name));
 	}
 
-	return true;
+	return parse_statement(p, compiler);
 }
 
 bool parse_empty_statement(struct parser *p)
