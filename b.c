@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+
+char const* ABI_REGISTERS[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+
 struct string_builder
 {
 	char *items;
@@ -509,12 +512,11 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, size_t target, 
 		return false;
 	}
 
-	char const* call_registers[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
-	size_t args[ARRAY_LEN(call_registers)];
+	size_t args[ARRAY_LEN(ABI_REGISTERS)];
 	size_t args_count = 0;
 
 	// TODO: This code is awful, we _need_ register allocation to fix it
-	for (size_t i = 0; i < ARRAY_LEN(call_registers); ++i) {
+	for (size_t i = 0; i < ARRAY_LEN(ABI_REGISTERS); ++i) {
 		if (i > 0) {
 			struct token comma;
 			if (!expect_token(p, &comma, TOK_COMMA)) {
@@ -531,7 +533,7 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, size_t target, 
 	}
 
 	for (size_t i = 0; i < args_count; ++i) {
-		printf("\tmov %s, [rbp-%zu]\n", call_registers[i], args[i]);
+		printf("\tmov %s, [rbp-%zu]\n", ABI_REGISTERS[i], args[i]);
 	}
 
 
@@ -874,6 +876,7 @@ bool parse_if(struct parser *p, struct compiler *compiler)
 
 	struct token else_;
 	if (!expect_token(p, &else_, TOK_ELSE)) {
+		leave_scope(compiler);
 		printf(".local_%zu:\n", else_label);
 		return true;
 	}
@@ -886,6 +889,7 @@ bool parse_if(struct parser *p, struct compiler *compiler)
 		exit(2);
 	}
 
+	leave_scope(compiler);
 	printf(".local_%zu:\n", fi_label);
 	return true;
 }
@@ -920,6 +924,62 @@ bool parse_statement(struct parser *p, struct compiler *compiler)
 	return false;
 }
 
+bool parse_function_definition(struct parser *p, struct compiler *compiler, struct token name)
+{
+	struct token open;
+	if (!expect_token(p, &open, TOK_PAREN_OPEN)) {
+		return false;
+	}
+
+	assert(compiler->nesting == 0);
+	struct symbol fun = define_symbol(compiler, ((struct symbol) { .kind = GLOBAL, .name = name.text }), name);
+
+	printf("public sym_%zu as '%s'\n", fun.id, name.text);
+	printf("sym_%zu:\n", fun.id);
+	printf("\tpush rbp\n");
+	printf("\tmov rbp, rsp\n");
+	enter_scope(compiler);
+
+	size_t arguments_count = 0;
+	for (;;) {
+		struct token arg = {};
+		if (expect_token(p, &arg, TOK_IDENTIFIER)) {
+			struct symbol arg_sym = define_symbol(compiler, ((struct symbol) { .kind = LOCAL, .name = arg.text, .offset = alloc_stack(compiler) }), arg);
+			assert(arguments_count < ARRAY_LEN(ABI_REGISTERS));
+			printf("\tmov [rbp-%zu], %s\n", arg_sym.offset, ABI_REGISTERS[arguments_count++]);
+		}
+
+		struct token next;
+		if (expect_token(p, &next, TOK_PAREN_CLOSE)) {
+			break;
+		} else if (arg.kind == TOK_IDENTIFIER && expect_token(p, &next, TOK_COMMA)) {
+			continue;
+		} else {
+			fprintf(stderr, "%s:%d:%d: error: function definition expectes either close paren or comma, got %s\n", next.filename, next.line, next.column, token_short_name(next));
+			fprintf(stderr, "%s:%d:%d: note: paren was open here\n", open.filename, open.line, open.column);
+			exit(2);
+		}
+	}
+
+	if (!parse_statement(p, compiler)) {
+		struct token tok = peek_token(p);
+		fprintf(stderr, "%s:%d:%d: error: expected statement after function definition, got %s\n", tok.filename, tok.line, tok.column, token_short_name(tok));
+		exit(1);
+	}
+
+	if (strcmp(name.text, "main") == 0) {
+		printf("\txor rax, rax\n");
+	}
+
+	printf("\tleave\n");
+	printf("\tret\n");
+
+	leave_scope(compiler);
+
+	return true;
+}
+
+
 bool parse_definition(struct parser *p, struct compiler *compiler)
 {
 	struct token name;
@@ -927,40 +987,7 @@ bool parse_definition(struct parser *p, struct compiler *compiler)
 		return false;
 	}
 
-	struct token open;
-	if (expect_token(p, &open, TOK_PAREN_OPEN)) {
-		struct token close;
-		if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
-			fprintf(stderr, "%s:%d:%d: error: definition expected close paren, got %s\n", close.filename, close.line, close.column, token_short_name(close));
-			fprintf(stderr, "%s:%d:%d: note: paren was open here\n", open.filename, open.line, open.column);
-			exit(2);
-		}
-
-		assert(compiler->nesting == 0);
-		struct symbol fun = define_symbol(compiler, ((struct symbol) { .kind = GLOBAL, .name = name.text }), name);
-
-		printf("public sym_%zu as '%s'\n", fun.id, name.text);
-		printf("sym_%zu:\n", fun.id);
-		printf("\tpush rbp\n");
-		printf("\tmov rbp, rsp\n");
-
-		enter_scope(compiler);
-		if (!parse_statement(p, compiler)) {
-			struct token tok = peek_token(p);
-			fprintf(stderr, "%s:%d:%d: error: expected statement after function definition, got %s\n", tok.filename, tok.line, tok.column, token_short_name(tok));
-			exit(1);
-		}
-		leave_scope(compiler);
-
-		if (strcmp(name.text, "main") == 0) {
-			printf("\tleave\n");
-			printf("\txor rax, rax\n");
-			printf("\tret\n");
-		}
-		return true;
-	} else {
-		assert(0 && "other definition syntax not implemented yet");
-	}
+	return parse_function_definition(p, compiler, name);
 }
 
 void parse_program(struct parser *p, struct compiler *compiler)

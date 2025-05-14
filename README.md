@@ -31,8 +31,7 @@ Long term goals:
     - [ ] Octal integer literals
     - [ ] Multicharacter literals
 - [ ] Definitions
-    - [x] Empty function definition
-    - [ ] Functions with arguments
+    - [x] Functions
     - [ ] Global variable definition
 - [ ] Statements
     - [x] `extrn`
@@ -42,21 +41,19 @@ Long term goals:
     - [x] expression statements
     - [x] compound statement
     - [x] `if`
+    - [x] empty statement
     - [ ] `goto`
     - [ ] `switch`
     - [ ] `case`
     - [ ] statement labels
-    - [ ] empty statement
 - [ ] Expressions
     - [x] Function call
     - [x] Constant
     - [ ] Binary operators
-    - [ ] Unary operator
+    - [ ] Unary operators
     - [ ] Dereference
     - [ ] Address of
     - [ ] Ternary conditional
-    - [ ] Pre-increment/decrement
-    - [ ] Post-increment/decrement
     - [ ] Assigment
     - [ ] Compound assigment
     - [ ] Index
