@@ -51,9 +51,9 @@ Long term goals:
     - [x] Constant
     - [ ] Binary operators
         - [x] Additive operators: `+ -`
+        - [x] Multiplicative operators: `* / %`
         - [ ] Shift operators: `<< >>`
         - [ ] Bitwise operators: `& ^ |`
-        - [ ] Multiplicative operators: `* / %`
         - [ ] Relational operatos: `< > <= >= == !=`
         - [ ] Logical (short circuting): `&& ||`
         - [ ] Ternary: `?:`

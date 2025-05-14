@@ -77,18 +77,19 @@ struct token
 		// Token used to mark end of file
 		TOK_EOF = 0,
 
+		TOK_ASSIGN = '=',
+		TOK_ASTERISK = '*',
+		TOK_COMMA = ',',
 		TOK_CURLY_CLOSE = '}',
 		TOK_CURLY_OPEN = '{',
 		TOK_DIV = '/',
+		TOK_LESS = '<',
 		TOK_MINUS = '-',
 		TOK_PAREN_CLOSE = ')',
 		TOK_PAREN_OPEN = '(',
-		TOK_SEMICOLON = ';',
-		TOK_ASSIGN = '=',
-		TOK_COMMA = ',',
+		TOK_PERCENT = '%',
 		TOK_PLUS = '+',
-		TOK_ASTERISK = '*',
-		TOK_LESS = '<',
+		TOK_SEMICOLON = ';',
 
 		// Make sure that non ascii tokens start after ascii letters
 		TOK_IDENTIFIER = 127,
@@ -660,6 +661,7 @@ size_t precedense(enum token_kind kind)
 
 	case TOK_DIV:
 	case TOK_ASTERISK:
+	case TOK_PERCENT:
 		return 400;
 
 	default:
@@ -702,6 +704,15 @@ void emit_op(struct compiler *compiler, size_t lhs, enum token_kind op, size_t r
 		printf("\tsetl cl\n");
 		printf("\tmov [rbp-%zu], rcx\n", lhs);
 		return;
+
+	case TOK_DIV:
+	case TOK_PERCENT:
+		printf("\tmov rax, [rbp-%zu]\n", lhs);
+		printf("\tcqo\n");
+		printf("\tidiv QWORD [rbp-%zu]\n", rhs);
+		printf("\tmov [rbp-%zu], %s\n", lhs, op == TOK_DIV ? "rax" : "rdx");
+		return;
+
 
 	default:
 		assert(0 && "math not implemented yet");
@@ -1004,6 +1015,7 @@ void parse_program(struct parser *p, struct compiler *compiler)
 char const* token_short_name(struct token tok)
 {
 	switch (tok.kind) {
+	case TOK_PERCENT: return "%";
 	case TOK_COMMA: return ",";
 	case TOK_EOF: return "end of file";
 	case TOK_IDENTIFIER: return "identifier";
@@ -1071,18 +1083,19 @@ void dump_token(FILE *out, struct token tok)
 		fprintf(out, "%s\n", KEYWORDS[tok.kind]);
 		break;
 
+	case TOK_ASSIGN:
+	case TOK_ASTERISK:
 	case TOK_COMMA:
 	case TOK_CURLY_CLOSE:
 	case TOK_CURLY_OPEN:
 	case TOK_DIV:
+	case TOK_LESS:
 	case TOK_MINUS:
 	case TOK_PAREN_CLOSE:
 	case TOK_PAREN_OPEN:
-	case TOK_SEMICOLON:
-	case TOK_ASSIGN:
+	case TOK_PERCENT:
 	case TOK_PLUS:
-	case TOK_ASTERISK:
-	case TOK_LESS:
+	case TOK_SEMICOLON:
 		fprintf(out, "%c\n", tok.kind);
 		break;
 	}
@@ -1121,17 +1134,18 @@ again:
 #define ASCII(T) \
 	case T: ret.column = ctx->column++; ret.line = ctx->line; ret.kind = T; return ret
 
+	ASCII(TOK_ASSIGN);
+	ASCII(TOK_ASTERISK);
+	ASCII(TOK_COMMA);
 	ASCII(TOK_CURLY_CLOSE);
 	ASCII(TOK_CURLY_OPEN);
+	ASCII(TOK_LESS);
 	ASCII(TOK_MINUS);
 	ASCII(TOK_PAREN_CLOSE);
 	ASCII(TOK_PAREN_OPEN);
-	ASCII(TOK_SEMICOLON);
-	ASCII(TOK_ASSIGN);
-	ASCII(TOK_COMMA);
+	ASCII(TOK_PERCENT);
 	ASCII(TOK_PLUS);
-	ASCII(TOK_ASTERISK);
-	ASCII(TOK_LESS);
+	ASCII(TOK_SEMICOLON);
 #undef ASCII
 
 	case '/':
