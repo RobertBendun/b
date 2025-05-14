@@ -41,7 +41,7 @@ Long term goals:
     - [x] `while`
     - [x] expression statements
     - [x] compound statement
-    - [ ] `if`
+    - [x] `if`
     - [ ] `goto`
     - [ ] `switch`
     - [ ] `case`

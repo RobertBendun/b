@@ -817,6 +817,66 @@ bool parse_while(struct parser *p, struct compiler *compiler)
 	return true;
 }
 
+bool parse_if(struct parser *p, struct compiler *compiler)
+{
+	struct token if_;
+	if (!expect_token(p, &if_, TOK_IF)) {
+		return false;
+	}
+
+	struct token open;
+	if (!expect_token(p, &open, TOK_PAREN_OPEN)) {
+		fprintf(stderr, "%s:%d:%d: error: expected open paren after if, got %s\n", open.filename, open.line, open.column, token_short_name(open));
+		exit(2);
+	}
+
+
+	size_t cond = alloc_stack(compiler);
+
+	enter_scope(compiler);
+
+	size_t else_label = compiler->last_local_id++;
+	size_t fi_label = compiler->last_local_id++;
+
+	if (!parse_expression(p, compiler, cond)) {
+		fprintf(stderr, "%s:%d:%d: error: expected condition inside if statement\n", open.filename, open.line, open.column);
+		exit(2);
+	}
+
+	printf("\tmov rax, [rbp-%zu]\n", cond);
+	printf("\tcmp rax, 0\n");
+	printf("\tje .local_%zu\n", else_label);
+
+	struct token close;
+	if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
+		fprintf(stderr, "%s:%d:%d: error: expected close paren, got %s\n", close.filename, close.line, close.column, token_short_name(close));
+		fprintf(stderr, "%s:%d:%d: note: paren was open here\n", open.filename, open.line, open.column);
+		exit(2);
+	}
+
+	if (!parse_statement(p, compiler)) {
+		fprintf(stderr, "%s:%d:%d: error: expected statement after if\n", close.filename, close.line, close.column);
+		exit(2);
+	}
+
+	struct token else_;
+	if (!expect_token(p, &else_, TOK_ELSE)) {
+		printf(".local_%zu:\n", else_label);
+		return true;
+	}
+
+	printf("\tjmp .local_%zu\n", fi_label);
+	printf(".local_%zu:\n", else_label);
+
+	if (!parse_statement(p, compiler)) {
+		fprintf(stderr, "%s:%d:%d: error: expected statement after else\n", else_.filename, else_.line, else_.column);
+		exit(2);
+	}
+
+	printf(".local_%zu:\n", fi_label);
+	return true;
+}
+
 bool parse_statement(struct parser *p, struct compiler *compiler)
 {
 	if (parse_empty_statement(p)
@@ -829,7 +889,7 @@ bool parse_statement(struct parser *p, struct compiler *compiler)
 
 	size_t stack_offset = compiler->stack_current_offset;
 
-	if (parse_return(p, compiler) || parse_while(p, compiler)) {
+	if (parse_return(p, compiler) || parse_while(p, compiler) || parse_if(p, compiler)) {
 		compiler->stack_current_offset = stack_offset;
 		return true;
 	}
@@ -1116,6 +1176,7 @@ again:
 		case '*':
 			ctx->column++;
 			ret.text = strdup((char[]) { '*', escape_seq(fgetc(ctx->source), ctx->filename, ctx->line, ctx->column), '\0' });
+			ret.ival = ret.text[1];
 			ctx->column++;
 			break;
 

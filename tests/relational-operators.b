@@ -1,0 +1,6 @@
+main() {
+	extrn printf;
+	printf("10 < 100  = %d*n", 10 < 100);
+	printf("100 < 10  = %d*n", 100 < 10);
+	printf("100 < 100 = %d*n", 100 < 100);
+}
