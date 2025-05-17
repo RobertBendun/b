@@ -53,9 +53,9 @@ Long term goals:
         - [x] Additive operators: `+ -`
         - [x] Multiplicative operators: `* / %`
         - [x] Assigment `=`
+        - [x] Relational operatos: `< > <= >= == !=`
         - [ ] Shift operators: `<< >>`
         - [ ] Bitwise operators: `& ^ |`
-        - [ ] Relational operatos: `< > <= >= == !=`
         - [ ] Logical (short circuting): `&& ||`
         - [ ] Compound assigment `op=`
         - [ ] Index

@@ -77,20 +77,22 @@ struct token
 		// Token used to mark end of file
 		TOK_EOF = 0,
 
+		TOK_AND = '&',
 		TOK_ASSIGN = '=',
 		TOK_ASTERISK = '*',
 		TOK_COMMA = ',',
 		TOK_CURLY_CLOSE = '}',
 		TOK_CURLY_OPEN = '{',
 		TOK_DIV = '/',
+		TOK_GREATER = '>',
 		TOK_LESS = '<',
+		TOK_LOGICAL_NOT = '!',
 		TOK_MINUS = '-',
 		TOK_PAREN_CLOSE = ')',
 		TOK_PAREN_OPEN = '(',
 		TOK_PERCENT = '%',
 		TOK_PLUS = '+',
 		TOK_SEMICOLON = ';',
-		TOK_AND = '&',
 
 		// Make sure that non ascii tokens start after ascii letters
 		TOK_IDENTIFIER = 127,
@@ -113,6 +115,9 @@ struct token
 
 		// Operators:
 		TOK_EQUAL,
+		TOK_LESS_OR_EQ,
+		TOK_GREATER_OR_EQ,
+		TOK_NOT_EQUAL,
 	} kind;
 
 	char const* text;
@@ -126,34 +131,39 @@ char const* token_kind_short_name(enum token_kind kind)
 {
 	switch (kind) {
 	case TOK_AND: return "&";
-	case TOK_PERCENT: return "%";
-	case TOK_COMMA: return ",";
-	case TOK_EOF: return "end of file";
-	case TOK_IDENTIFIER: return "identifier";
-	case TOK_INTEGER: return "integer literal";
+	case TOK_ASSIGN: return "=";
+	case TOK_ASTERISK: return "*";
+	case TOK_AUTO: return "auto keyword";
+	case TOK_CASE: return "case keyword";
 	case TOK_CHARACTER: return "character literal";
+	case TOK_COMMA: return ",";
 	case TOK_CURLY_CLOSE: return "}";
 	case TOK_CURLY_OPEN: return "{";
 	case TOK_DIV: return "/";
-	case TOK_MINUS: return "-";
-	case TOK_ASTERISK: return "*";
-	case TOK_PAREN_CLOSE: return ")";
-	case TOK_PAREN_OPEN: return "(";
-	case TOK_SEMICOLON: return ";";
-	case TOK_ASSIGN: return "=";
-	case TOK_PLUS: return "+";
-	case TOK_LESS: return "<";
-	case TOK_EQUAL: return "==";
-	case TOK_AUTO: return "auto keyword";
-	case TOK_CASE: return "case keyword";
 	case TOK_ELSE: return "else keyword";
+	case TOK_EOF: return "end of file";
+	case TOK_EQUAL: return "==";
 	case TOK_EXTRN: return "extrn keyword";
 	case TOK_GOTO: return "goto keyword";
+	case TOK_GREATER: return ">";
+	case TOK_GREATER_OR_EQ: return ">=";
+	case TOK_IDENTIFIER: return "identifier";
 	case TOK_IF: return "if keyword";
+	case TOK_INTEGER: return "integer literal";
+	case TOK_LESS: return "<";
+	case TOK_LESS_OR_EQ: return "<=";
+	case TOK_LOGICAL_NOT: return "!";
+	case TOK_MINUS: return "-";
+	case TOK_NOT_EQUAL: return "!=";
+	case TOK_PAREN_CLOSE: return ")";
+	case TOK_PAREN_OPEN: return "(";
+	case TOK_PERCENT: return "%";
+	case TOK_PLUS: return "+";
 	case TOK_RETURN: return "return keyword";
+	case TOK_SEMICOLON: return ";";
+	case TOK_STRING: return "string literal";
 	case TOK_SWITCH: return "switch keyword";
 	case TOK_WHILE: return "while keyword";
-	case TOK_STRING: return "string literal";
 	}
 
 	assert(0 && "unreachable");
@@ -667,9 +677,13 @@ size_t precedense(enum token_kind kind)
 		return 100;
 
 	case TOK_EQUAL:
+	case TOK_NOT_EQUAL:
 		return 150;
 
+	case TOK_GREATER:
+	case TOK_GREATER_OR_EQ:
 	case TOK_LESS:
+	case TOK_LESS_OR_EQ:
 		return 200;
 
 	case TOK_PLUS:
@@ -750,12 +764,20 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 		printf("\tmov [rbp-%zu], rax\n",  res);
 		return;
 
-	case TOK_LESS:
 	case TOK_EQUAL:
+	case TOK_GREATER:
+	case TOK_GREATER_OR_EQ:
+	case TOK_LESS:
+	case TOK_LESS_OR_EQ:
+	case TOK_NOT_EQUAL:
 		{
 			static char const* SET_SUFFIX[] = {
 				[TOK_EQUAL] = "e",
+				[TOK_GREATER] = "g",
+				[TOK_GREATER_OR_EQ] = "ge",
 				[TOK_LESS] = "l",
+				[TOK_LESS_OR_EQ] = "le",
+				[TOK_NOT_EQUAL] = "ne",
 			};
 			printf("\txor rcx, rcx\n");
 			printf("\tmov rax, [rbp-%zu]\n", lhs);
@@ -1135,6 +1157,18 @@ void dump_token(FILE *out, struct token tok)
 		fprintf(out, "==\n");
 		break;
 
+	case TOK_NOT_EQUAL:
+		fprintf(out, "==\n");
+		break;
+
+	case TOK_LESS_OR_EQ:
+		fprintf(out, "<=\n");
+		break;
+
+	case TOK_GREATER_OR_EQ:
+		fprintf(out, ">=\n");
+		break;
+
 	case TOK_AUTO:
 	case TOK_CASE:
 	case TOK_ELSE:
@@ -1154,7 +1188,9 @@ void dump_token(FILE *out, struct token tok)
 	case TOK_CURLY_CLOSE:
 	case TOK_CURLY_OPEN:
 	case TOK_DIV:
+	case TOK_GREATER:
 	case TOK_LESS:
+	case TOK_LOGICAL_NOT:
 	case TOK_MINUS:
 	case TOK_PAREN_CLOSE:
 	case TOK_PAREN_OPEN:
@@ -1203,7 +1239,6 @@ again:
 	ASCII(TOK_COMMA);
 	ASCII(TOK_CURLY_CLOSE);
 	ASCII(TOK_CURLY_OPEN);
-	ASCII(TOK_LESS);
 	ASCII(TOK_MINUS);
 	ASCII(TOK_PAREN_CLOSE);
 	ASCII(TOK_PAREN_OPEN);
@@ -1213,20 +1248,27 @@ again:
 	ASCII(TOK_AND);
 #undef ASCII
 
-	case '=':
-		if ((c = fgetc(ctx->source)) == '=') {
-			ret.kind = TOK_EQUAL;
-			ret.column = ctx->column;
-			ret.line = ctx->line;
-			ctx->column += 2;
-			return ret;
-		} else {
-			ungetc(c, ctx->source);
-			ret.column = ctx->column++;
-			ret.line = ctx->line;
-			ret.kind = TOK_ASSIGN;
-			return ret;
+#define ONE_OR_TWO(c1, t1, c2, t2) \
+	case c1: \
+		if ((c = fgetc(ctx->source)) == c2) { \
+			ret.kind = t2; \
+			ret.column = ctx->column; \
+			ret.line = ctx->line; \
+			ctx->column += 2; \
+			return ret; \
+		} else { \
+			ungetc(c, ctx->source); \
+			ret.column = ctx->column++; \
+			ret.line = ctx->line; \
+			ret.kind = t1; \
+			return ret; \
 		}
+
+	ONE_OR_TWO('=', TOK_ASSIGN, '=', TOK_EQUAL);
+	ONE_OR_TWO('<', TOK_LESS, '=', TOK_LESS_OR_EQ);
+	ONE_OR_TWO('>', TOK_GREATER, '=', TOK_GREATER_OR_EQ);
+	ONE_OR_TWO('!', TOK_LOGICAL_NOT, '=', TOK_NOT_EQUAL);
+#undef ONE_OR_TWO
 
 	case '/':
 		if ((c = fgetc(ctx->source)) == '*') {
