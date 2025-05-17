@@ -1,3 +1,17 @@
+-----------------------------------------------------------
+Word addressing vs bit addressing
+-----------------------------------------------------------
+
+Writing functions char and lchar for addressing bits is quite awkward.
+Some nice syntax for bit level addressing would be great.
+It should be considered carefully since it splits language
+in two and may make cross platform libraries more cumbersome (for example on WebAssembly word would be 32 bit)
+
+
+-----------------------------------------------------------
+Anonymous functions
+-----------------------------------------------------------
+
 Since main() return 10; is proper function declaration in B, we have clear path for very easy anonymous function syntax, for example:
   \() return 10;
 Note that this is just anonymous function - it doesn't hold any state and cannot reference any of the surrunding context.

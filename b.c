@@ -118,6 +118,46 @@ struct token
 	char const* filename;
 };
 
+char const* token_kind_short_name(enum token_kind kind)
+{
+	switch (kind) {
+	case TOK_PERCENT: return "%";
+	case TOK_COMMA: return ",";
+	case TOK_EOF: return "end of file";
+	case TOK_IDENTIFIER: return "identifier";
+	case TOK_INTEGER: return "integer literal";
+	case TOK_CHARACTER: return "character literal";
+	case TOK_CURLY_CLOSE: return "}";
+	case TOK_CURLY_OPEN: return "{";
+	case TOK_DIV: return "/";
+	case TOK_MINUS: return "-";
+	case TOK_ASTERISK: return "*";
+	case TOK_PAREN_CLOSE: return ")";
+	case TOK_PAREN_OPEN: return "(";
+	case TOK_SEMICOLON: return ";";
+	case TOK_ASSIGN: return "=";
+	case TOK_PLUS: return "+";
+	case TOK_LESS: return "<";
+	case TOK_AUTO: return "auto keyword";
+	case TOK_CASE: return "case keyword";
+	case TOK_ELSE: return "else keyword";
+	case TOK_EXTRN: return "extrn keyword";
+	case TOK_GOTO: return "goto keyword";
+	case TOK_IF: return "if keyword";
+	case TOK_RETURN: return "return keyword";
+	case TOK_SWITCH: return "switch keyword";
+	case TOK_WHILE: return "while keyword";
+	case TOK_STRING: return "string literal";
+	}
+
+	assert(0 && "unreachable");
+}
+
+char const* token_short_name(struct token tok)
+{
+	return token_kind_short_name(tok.kind);
+}
+
 struct tokenizer
 {
 	FILE *source;
@@ -364,8 +404,15 @@ bool expect_token_if(struct parser *p, struct token *tok, bool(*predicate)(enum 
 	return false;
 }
 
-bool parse_expression(struct parser *p, struct compiler *compiler, size_t target);
-bool parse_atomic(struct parser *p, struct compiler *compiler, size_t target);
+struct value
+{
+	enum { EMPTY, RVALUE, LVALUE } kind;
+	union { size_t offset; };
+};
+
+
+bool parse_expression(struct parser *p, struct compiler *compiler, struct value *result);
+bool parse_atomic(struct parser *p, struct compiler *compiler, struct value *lhs);
 
 bool parse_return(struct parser *p, struct compiler *compiler)
 {
@@ -376,14 +423,14 @@ bool parse_return(struct parser *p, struct compiler *compiler)
 
 	struct token open, semicolon;
 	if (expect_token(p, &open, TOK_PAREN_OPEN)) {
-		size_t retval = alloc_stack(compiler);
+		struct value retval;
 
-		if (!parse_expression(p, compiler, retval)) {
+		if (!parse_expression(p, compiler, &retval)) {
 			fprintf(stderr, "%s:%d:%d: error: expected rvalue\n", open.filename, open.line, open.column);
 			exit(1);
 		}
 
-		printf("\tmov rax, [rbp-%zu]\n", retval);
+		printf("\tmov rax, [rbp-%zu]\n", retval.offset);
 		printf("\tleave\n");
 		printf("\tret\n");
 
@@ -506,14 +553,14 @@ bool parse_compund_statement(struct parser *p, struct compiler *compiler)
 	return true;
 }
 
-bool parse_funccall(struct parser *p, struct compiler *compiler, size_t target, struct symbol *symbol)
+bool parse_funccall(struct parser *p, struct compiler *compiler, struct value *result, struct symbol *symbol)
 {
 	struct token open;
 	if (!expect_token(p, &open, TOK_PAREN_OPEN)) {
 		return false;
 	}
 
-	size_t args[ARRAY_LEN(ABI_REGISTERS)];
+	struct value args[ARRAY_LEN(ABI_REGISTERS)];
 	size_t args_count = 0;
 
 	// TODO: This code is awful, we _need_ register allocation to fix it
@@ -527,14 +574,15 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, size_t target, 
 			}
 		}
 
-		size_t arg = args[args_count++] = alloc_stack(compiler);
-		if (!parse_expression(p, compiler, arg)) {
+		if (!parse_expression(p, compiler, &args[args_count])) {
 			break;
 		}
+		++args_count;
 	}
 
 	for (size_t i = 0; i < args_count; ++i) {
-		printf("\tmov %s, [rbp-%zu]\n", ABI_REGISTERS[i], args[i]);
+		assert(args[i].kind != EMPTY);
+		printf("\tmov %s, [rbp-%zu]\n", ABI_REGISTERS[i], args[i].offset);
 	}
 
 
@@ -553,23 +601,15 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, size_t target, 
 		case LOCAL: printf("\tlea r10, QWORD [rbp-%zu]\n\tcall r10\n", symbol->offset); break;
 	}
 
-	printf("\tmov [rbp-%zu], rax\n", target);
+	result->kind = RVALUE;
+	result->offset = alloc_stack(compiler);
+	printf("\tmov [rbp-%zu], rax\n", result->offset);
 
 	return true;
 }
 
-bool parse_assign(struct parser *p, struct compiler *compiler, size_t lvalue)
+bool parse_name(struct parser *p, struct compiler *compiler, struct symbol **symbol, struct value *lhs)
 {
-	struct token assign;
-	if (!expect_token(p, &assign, TOK_ASSIGN))
-		return false;
-
-	return parse_expression(p, compiler, lvalue);
-}
-
-bool parse_lvalue(struct parser *p, struct compiler *compiler, struct symbol **symbol)
-{
-	// TODO: Implement dereference and indexing
 	struct token name;
 	if (!expect_token(p, &name, TOK_IDENTIFIER)) {
 		return false;
@@ -579,71 +619,39 @@ bool parse_lvalue(struct parser *p, struct compiler *compiler, struct symbol **s
 		fprintf(stderr, "%s:%d:%d: error: '%s' has not been defined yet\n", name.filename, name.line, name.column, name.text);
 		exit(1);
 	}
+	// TODO: This only works for local names, other kinds of symbols are loaded differently
+	if ((*symbol)->kind == LOCAL) {
+		lhs->kind = LVALUE;
+		lhs->offset = (*symbol)->offset;
+	}
 	return true;
 }
 
-bool parse_constant(struct parser *p, struct compiler *compiler, size_t target)
+bool parse_constant(struct parser *p, struct compiler *compiler, struct value *lhs)
 {
-	(void)compiler;
 	struct token constant;
 	if (expect_token(p, &constant, TOK_INTEGER)) {
-		printf("\tmov QWORD [rbp-%zu], %"PRIu64"\n", target, constant.ival);
+		lhs->kind = RVALUE;
+		lhs->offset = alloc_stack(compiler);
+		printf("\tmov QWORD [rbp-%zu], %"PRIu64"\n", lhs->offset, constant.ival);
 		return true;
 	}
 	if (expect_token(p, &constant, TOK_CHARACTER)) {
-		printf("\tmov QWORD [rbp-%zu], %"PRIu64"\n", target, constant.ival);
+		lhs->kind = RVALUE;
+		lhs->offset = alloc_stack(compiler);
+		printf("\tmov QWORD [rbp-%zu], %"PRIu64"\n", lhs->offset, constant.ival);
 		return true;
 	}
 	if (expect_token(p, &constant, TOK_STRING)) {
+		lhs->kind = RVALUE;
+		lhs->offset = alloc_stack(compiler);
 		printf("\tlea rax, [strend-%zu]\n", string_offset(constant.text));
-		printf("\tmov [rbp-%zu], rax\n", target);
+		printf("\tmov [rbp-%zu], rax\n", lhs->offset);
 		return true;
 	}
 
 	return false;
 }
-
-#if 0
-bool maybe_parse_addition_or_subtraction(struct parser *p, struct compiler *compiler, size_t target)
-{
-	struct token op;
-	if (expect_token(p, &op, TOK_PLUS) || expect_token(p, &op, TOK_MINUS)) {
-		size_t tmp = alloc_stack(compiler);
-
-		if (!parse_(p, compiler, tmp)) {
-			fprintf(stderr, "%s:%d:%d: expected rvalue on the right of %s\n", op.filename, op.line, op.column, token_short_name(op));
-			exit(1);
-		}
-
-		printf("\tmov rax, [rbp-%zu]\n", target);
-		printf("\t%s rax, [rbp-%zu]\n", op.kind == TOK_PLUS ? "add" : "sub", tmp);
-		printf("\tmov [rbp-%zu], rax\n", target);
-	}
-
-	return true;
-}
-
-bool maybe_parse_multiplication(struct parser *p, struct compiler *compiler, size_t target)
-{
-	maybe_parse_addition_or_subtraction(p, compiler, target);
-
-	struct token op;
-	if (expect_token(p, &op, TOK_ASTERISK)) {
-		size_t tmp = alloc_stack(compiler);
-
-		if (!parse_rvalue(p, compiler, tmp)) {
-			fprintf(stderr, "%s:%d:%d: expected rvalue on the right of %s\n", op.filename, op.line, op.column, token_short_name(op));
-			exit(1);
-		}
-
-		printf("\tmov rax, [rbp-%zu]\n", target);
-		printf("\timul rax, [rbp-%zu]\n", tmp);
-		printf("\tmov [rbp-%zu], rax\n", target);
-	}
-	return true;
-}
-#endif
-
 
 size_t precedense(enum token_kind kind)
 {
@@ -669,32 +677,68 @@ size_t precedense(enum token_kind kind)
 	}
 }
 
+enum { ASSOC_LEFT, ASSOC_RIGHT } associativity(enum token_kind kind)
+{
+	// TODO: Static checking for this switch
+	switch (kind) {
+	case TOK_ASSIGN:
+		return ASSOC_RIGHT;
+
+	case TOK_LESS:
+	case TOK_PLUS:
+	case TOK_MINUS:
+	case TOK_DIV:
+	case TOK_ASTERISK:
+	case TOK_PERCENT:
+		return ASSOC_LEFT;
+
+	default:
+		assert(false && "unreachable");
+	}
+}
+
+
 bool is_operator(enum token_kind kind)
 {
 	return precedense(kind) != 0;
 }
 
-void emit_op(struct compiler *compiler, size_t lhs, enum token_kind op, size_t rhs)
+void emit_op(struct compiler *compiler, struct value *result, struct value lhsv, enum token_kind op, struct value rhsv)
 {
-	(void)compiler;
 	// TODO: Static checking for this switch
+	size_t lhs = lhsv.offset;
+	size_t rhs = rhsv.offset;
+	assert(lhsv.kind != EMPTY);
+	assert(rhsv.kind != EMPTY);
+
+	// TODO: Not needed for assign
+	size_t res = alloc_stack(compiler);
+	*result = (struct value) { .kind = RVALUE, .offset = res };
+
 	switch (op) {
+	case TOK_ASSIGN:
+		assert(lhsv.kind == LVALUE);
+		printf("\tmov rax, [rbp-%zu]\n", rhs);
+		printf("\tmov [rbp-%zu], rax\n", lhs);
+		*result = lhsv;
+		return;
+
 	case TOK_PLUS:
 		printf("\tmov rax, [rbp-%zu]\n", lhs);
 		printf("\tadd rax, [rbp-%zu]\n", rhs);
-		printf("\tmov [rbp-%zu], rax\n", lhs);
+		printf("\tmov [rbp-%zu], rax\n", res);
 		return;
 
 	case TOK_MINUS:
 		printf("\tmov rax, [rbp-%zu]\n", lhs);
 		printf("\tsub rax, [rbp-%zu]\n", rhs);
-		printf("\tmov [rbp-%zu], rax\n", lhs);
+		printf("\tmov [rbp-%zu], rax\n", res);
 		return;
 
 	case TOK_ASTERISK:
 		printf("\tmov rax, [rbp-%zu]\n",  lhs);
 		printf("\timul rax, [rbp-%zu]\n", rhs);
-		printf("\tmov [rbp-%zu], rax\n",  lhs);
+		printf("\tmov [rbp-%zu], rax\n",  res);
 		return;
 
 	case TOK_LESS:
@@ -702,7 +746,7 @@ void emit_op(struct compiler *compiler, size_t lhs, enum token_kind op, size_t r
 		printf("\tmov rax, [rbp-%zu]\n", lhs);
 		printf("\tcmp rax, [rbp-%zu]\n", rhs);
 		printf("\tsetl cl\n");
-		printf("\tmov [rbp-%zu], rcx\n", lhs);
+		printf("\tmov [rbp-%zu], rcx\n", res);
 		return;
 
 	case TOK_DIV:
@@ -710,83 +754,92 @@ void emit_op(struct compiler *compiler, size_t lhs, enum token_kind op, size_t r
 		printf("\tmov rax, [rbp-%zu]\n", lhs);
 		printf("\tcqo\n");
 		printf("\tidiv QWORD [rbp-%zu]\n", rhs);
-		printf("\tmov [rbp-%zu], %s\n", lhs, op == TOK_DIV ? "rax" : "rdx");
+		printf("\tmov [rbp-%zu], %s\n", res, op == TOK_DIV ? "rax" : "rdx");
 		return;
 
 
 	default:
-		assert(0 && "math not implemented yet");
+		fprintf(stderr, "math not supported yet for operator: %s\n", token_kind_short_name(op));
+		exit(1);
 	}
 }
 
-void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, size_t lhs)
+void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, struct value *result, struct value lhs)
 {
 	// TODO: See if we can get away without allocating this varibale
-	size_t rhs = alloc_stack(compiler);
-	if (!parse_atomic(p, compiler, rhs)) {
+	struct value rhs = { .kind = RVALUE, .offset = alloc_stack(compiler) };
+
+	if (!parse_atomic(p, compiler, &rhs)) {
 		assert(0 && "report an error");
 	}
 
 	struct token next;
 	if (!expect_token_if(p, &next, is_operator)) {
-		emit_op(compiler, lhs, op.kind, rhs);
+		emit_op(compiler, result, lhs, op.kind, rhs);
 		return;
 	}
 
 	// For expression a op b next c, op has higher precedense then next so we
-	// should parse as (a op b) next c
-	if (precedense(op.kind) >= precedense(next.kind)) {
-		emit_op(compiler, lhs, op.kind, rhs);
-		parse_rhs(p, compiler, next, lhs);
-		return;
+	// should parse as (a op b) next c. otherwise we should parse a op (b next c)
+	// If op has the same precedense then we should bind according to the rules of associativity
+	bool bind_left = precedense(op.kind) >= precedense(next.kind);
+	if (precedense(op.kind) == precedense(next.kind)) {
+		bind_left = associativity(op.kind) == ASSOC_LEFT;
+		assert(associativity(op.kind) == associativity(next.kind));
 	}
 
-	// Otherwise we should parse as a op (b next c)
-	parse_rhs(p, compiler, next, rhs);
-	emit_op(compiler, lhs, op.kind, rhs);
-	return;
+	if (bind_left) {
+		emit_op(compiler, result, lhs, op.kind, rhs);
+		parse_rhs(p, compiler, next, result, *result);
+	} else {
+		parse_rhs(p, compiler, next, result, rhs);
+		emit_op(compiler, result, lhs, op.kind, *result);
+	}
 }
 
-bool maybe_parse_infix(struct parser *p, struct compiler *compiler, size_t target)
+bool maybe_parse_infix(struct parser *p, struct compiler *compiler, struct value *result, struct value lhs)
 {
 	struct token op;
 	if (!expect_token_if(p, &op, is_operator)) {
+		*result = lhs;
 		return true;
 	}
-	parse_rhs(p, compiler, op, target);;
+	parse_rhs(p, compiler, op, result, lhs);
 	return true;
 }
 
 
-bool parse_atomic(struct parser *p, struct compiler *compiler, size_t target)
+bool parse_atomic(struct parser *p, struct compiler *compiler, struct value *lhs)
 {
-	struct symbol *symbol;
+	struct symbol *symbol = NULL;
 
-	if (parse_constant(p, compiler, target)) {
+	if (parse_constant(p, compiler, lhs))
 		return true;
-	}
 
-	if (!parse_lvalue(p, compiler, &symbol)) {
+	if (!parse_name(p, compiler, &symbol, lhs))
 		return false;
-	}
 
-	if (parse_funccall(p, compiler, target, symbol))
+
+	if (parse_funccall(p, compiler, lhs, symbol))
 		return true;
 
+#if 0
 	assert(symbol->kind == LOCAL && "external or global symbols are only supported by function calls for now");
 
 	if (parse_assign(p,compiler, symbol->offset)) {
 		return true;
 	}
+#endif
 
-	printf("\tmov rax, [rbp-%zu]\n\tmov [rbp-%zu], rax\n", symbol->offset, target);
+	assert(symbol->kind == LOCAL && "external or global symbols are only supported by function calls for now");
 	return true;
 }
 
-bool parse_expression(struct parser *p, struct compiler *compiler, size_t target)
+bool parse_expression(struct parser *p, struct compiler *compiler, struct value *result)
 {
-	if (parse_atomic(p, compiler, target)) {
-		return maybe_parse_infix(p, compiler, target);
+	struct value lhs;
+	if (parse_atomic(p, compiler, &lhs)) {
+		return maybe_parse_infix(p, compiler, result, lhs);
 	}
 	return false;
 }
@@ -806,8 +859,6 @@ bool parse_while(struct parser *p, struct compiler *compiler)
 	}
 
 
-	size_t cond = alloc_stack(compiler);
-
 	enter_scope(compiler);
 
 	size_t loop_again = compiler->last_local_id++;
@@ -815,12 +866,14 @@ bool parse_while(struct parser *p, struct compiler *compiler)
 
 	printf(".local_%zu:\n", loop_again);
 
-	if (!parse_expression(p, compiler, cond)) {
+	struct value cond;
+	if (!parse_expression(p, compiler, &cond)) {
 		fprintf(stderr, "%s:%d:%d: error: expected condition inside while loop\n", open.filename, open.line, open.column);
 		exit(2);
 	}
 
-	printf("\tmov rax, [rbp-%zu]\n", cond);
+	assert(cond.kind != EMPTY);
+	printf("\tmov rax, [rbp-%zu]\n", cond.offset);
 	printf("\tcmp rax, 0\n");
 	printf("\tje .local_%zu\n", loop_exit);
 
@@ -857,19 +910,20 @@ bool parse_if(struct parser *p, struct compiler *compiler)
 	}
 
 
-	size_t cond = alloc_stack(compiler);
 
 	enter_scope(compiler);
 
 	size_t else_label = compiler->last_local_id++;
 	size_t fi_label = compiler->last_local_id++;
 
-	if (!parse_expression(p, compiler, cond)) {
+	struct value cond;
+	if (!parse_expression(p, compiler, &cond)) {
 		fprintf(stderr, "%s:%d:%d: error: expected condition inside if statement\n", open.filename, open.line, open.column);
 		exit(2);
 	}
 
-	printf("\tmov rax, [rbp-%zu]\n", cond);
+	assert(cond.kind != EMPTY);
+	printf("\tmov rax, [rbp-%zu]\n", cond.offset);
 	printf("\tcmp rax, 0\n");
 	printf("\tje .local_%zu\n", else_label);
 
@@ -922,7 +976,8 @@ bool parse_statement(struct parser *p, struct compiler *compiler)
 		return true;
 	}
 
-	if (parse_expression(p, compiler, alloc_stack(compiler))) {
+	struct value result;
+	if (parse_expression(p, compiler, &result)) {
 		struct token semicolon;
 		if (!expect_token(p, &semicolon, TOK_SEMICOLON)) {
 			fprintf(stderr, "%s:%d:%d: error: expected ; at the end of the statement, got %s\n", semicolon.filename, semicolon.line, semicolon.column, token_short_name(semicolon));
@@ -1010,41 +1065,6 @@ void parse_program(struct parser *p, struct compiler *compiler)
 		fprintf(stderr, "%s:%d:%d: error: stray '%s' at the end of the program\n", next.filename, next.line, next.column, token_short_name(next));
 		exit(1);
 	}
-}
-
-char const* token_short_name(struct token tok)
-{
-	switch (tok.kind) {
-	case TOK_PERCENT: return "%";
-	case TOK_COMMA: return ",";
-	case TOK_EOF: return "end of file";
-	case TOK_IDENTIFIER: return "identifier";
-	case TOK_INTEGER: return "integer literal";
-	case TOK_CHARACTER: return "character literal";
-	case TOK_CURLY_CLOSE: return "}";
-	case TOK_CURLY_OPEN: return "{";
-	case TOK_DIV: return "/";
-	case TOK_MINUS: return "-";
-	case TOK_ASTERISK: return "*";
-	case TOK_PAREN_CLOSE: return ")";
-	case TOK_PAREN_OPEN: return "(";
-	case TOK_SEMICOLON: return ";";
-	case TOK_ASSIGN: return "=";
-	case TOK_PLUS: return "+";
-	case TOK_LESS: return "<";
-	case TOK_AUTO: return "auto keyword";
-	case TOK_CASE: return "case keyword";
-	case TOK_ELSE: return "else keyword";
-	case TOK_EXTRN: return "extrn keyword";
-	case TOK_GOTO: return "goto keyword";
-	case TOK_IF: return "if keyword";
-	case TOK_RETURN: return "return keyword";
-	case TOK_SWITCH: return "switch keyword";
-	case TOK_WHILE: return "while keyword";
-	case TOK_STRING: return "string literal";
-	}
-
-	assert(0 && "unreachable");
 }
 
 void dump_token(FILE *out, struct token tok)

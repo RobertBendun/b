@@ -1,11 +1,8 @@
 main() {
 	extrn printf;
 	auto a, b, i, t;
-
-	a = 1;
+	a = i = 1;
 	b = 0;
-	i = 1;
-
 	while (i < 40) {
 		printf("fib(%d) = %d*n", i, a);
 		i = i + 1;

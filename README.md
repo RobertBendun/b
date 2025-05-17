@@ -52,13 +52,13 @@ Long term goals:
     - [ ] Binary operators
         - [x] Additive operators: `+ -`
         - [x] Multiplicative operators: `* / %`
+        - [x] Assigment `=`
         - [ ] Shift operators: `<< >>`
         - [ ] Bitwise operators: `& ^ |`
         - [ ] Relational operatos: `< > <= >= == !=`
         - [ ] Logical (short circuting): `&& ||`
-        - [ ] Ternary: `?:`
-        - [ ] Assigment `=`
         - [ ] Compound assigment `op=`
+        - [ ] Index
     - [ ] Unary operators
         - [ ] Bitwise complement: `~`
         - [ ] Negation: `-`
@@ -67,10 +67,6 @@ Long term goals:
         - [ ] Address of: `&`
         - [ ] Pre-increment/decrement
         - [ ] Post-increment/decrement
-    - [ ] Dereference
-    - [ ] Address of
-    - [ ] Ternary conditional
-    - [ ] Index
 
 ## Resources
 
