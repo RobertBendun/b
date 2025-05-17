@@ -90,6 +90,7 @@ struct token
 		TOK_PERCENT = '%',
 		TOK_PLUS = '+',
 		TOK_SEMICOLON = ';',
+		TOK_AND = '&',
 
 		// Make sure that non ascii tokens start after ascii letters
 		TOK_IDENTIFIER = 127,
@@ -109,6 +110,9 @@ struct token
 		TOK_INTEGER,
 		TOK_CHARACTER,
 		TOK_STRING,
+
+		// Operators:
+		TOK_EQUAL,
 	} kind;
 
 	char const* text;
@@ -121,6 +125,7 @@ struct token
 char const* token_kind_short_name(enum token_kind kind)
 {
 	switch (kind) {
+	case TOK_AND: return "&";
 	case TOK_PERCENT: return "%";
 	case TOK_COMMA: return ",";
 	case TOK_EOF: return "end of file";
@@ -138,6 +143,7 @@ char const* token_kind_short_name(enum token_kind kind)
 	case TOK_ASSIGN: return "=";
 	case TOK_PLUS: return "+";
 	case TOK_LESS: return "<";
+	case TOK_EQUAL: return "==";
 	case TOK_AUTO: return "auto keyword";
 	case TOK_CASE: return "case keyword";
 	case TOK_ELSE: return "else keyword";
@@ -412,7 +418,7 @@ struct value
 
 
 bool parse_expression(struct parser *p, struct compiler *compiler, struct value *result);
-bool parse_atomic(struct parser *p, struct compiler *compiler, struct value *lhs);
+bool parse_unary(struct parser *p, struct compiler *compiler, struct value *lhs);
 
 bool parse_return(struct parser *p, struct compiler *compiler)
 {
@@ -660,6 +666,9 @@ size_t precedense(enum token_kind kind)
 	case TOK_ASSIGN:
 		return 100;
 
+	case TOK_EQUAL:
+		return 150;
+
 	case TOK_LESS:
 		return 200;
 
@@ -742,12 +751,19 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 		return;
 
 	case TOK_LESS:
-		printf("\txor rcx, rcx\n");
-		printf("\tmov rax, [rbp-%zu]\n", lhs);
-		printf("\tcmp rax, [rbp-%zu]\n", rhs);
-		printf("\tsetl cl\n");
-		printf("\tmov [rbp-%zu], rcx\n", res);
-		return;
+	case TOK_EQUAL:
+		{
+			static char const* SET_SUFFIX[] = {
+				[TOK_EQUAL] = "e",
+				[TOK_LESS] = "l",
+			};
+			printf("\txor rcx, rcx\n");
+			printf("\tmov rax, [rbp-%zu]\n", lhs);
+			printf("\tcmp rax, [rbp-%zu]\n", rhs);
+			printf("\tset%s cl\n", SET_SUFFIX[op]);
+			printf("\tmov [rbp-%zu], rcx\n", res);
+			return;
+		}
 
 	case TOK_DIV:
 	case TOK_PERCENT:
@@ -769,7 +785,7 @@ void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, str
 	// TODO: See if we can get away without allocating this varibale
 	struct value rhs = { .kind = RVALUE, .offset = alloc_stack(compiler) };
 
-	if (!parse_atomic(p, compiler, &rhs)) {
+	if (!parse_unary(p, compiler, &rhs)) {
 		assert(0 && "report an error");
 	}
 
@@ -835,10 +851,34 @@ bool parse_atomic(struct parser *p, struct compiler *compiler, struct value *lhs
 	return true;
 }
 
+bool parse_unary(struct parser *p, struct compiler *compiler, struct value *result)
+{
+	struct token and_;
+	if (expect_token(p, &and_, TOK_AND)) {
+		struct value val;
+		if (!parse_atomic(p, compiler, &val)) {
+			fprintf(stderr, "%s:%d:%d: error: expected atomic expression for unary operator\n", and_.filename, and_.line, and_.column);
+			exit(1);
+		}
+
+		if (val.kind != LVALUE) {
+			fprintf(stderr, "%s:%d:%d: error: address of operator expects lvalue\n", and_.filename, and_.line, and_.column);
+			exit(1);
+		}
+
+		*result = (struct value) { .kind = RVALUE, .offset = alloc_stack(compiler) };
+		printf("\tlea rax, [rbp-%zu]\n", val.offset);
+		printf("\tmov [rbp-%zu], rax\n", result->offset);
+		return true;
+	}
+
+	return parse_atomic(p, compiler, result);
+}
+
 bool parse_expression(struct parser *p, struct compiler *compiler, struct value *result)
 {
 	struct value lhs;
-	if (parse_atomic(p, compiler, &lhs)) {
+	if (parse_unary(p, compiler, &lhs)) {
 		return maybe_parse_infix(p, compiler, result, lhs);
 	}
 	return false;
@@ -1091,6 +1131,10 @@ void dump_token(FILE *out, struct token tok)
 		fprintf(out, "String \"%s\"\n", tok.text);
 		break;
 
+	case TOK_EQUAL:
+		fprintf(out, "==\n");
+		break;
+
 	case TOK_AUTO:
 	case TOK_CASE:
 	case TOK_ELSE:
@@ -1103,6 +1147,7 @@ void dump_token(FILE *out, struct token tok)
 		fprintf(out, "%s\n", KEYWORDS[tok.kind]);
 		break;
 
+	case TOK_AND:
 	case TOK_ASSIGN:
 	case TOK_ASTERISK:
 	case TOK_COMMA:
@@ -1154,7 +1199,6 @@ again:
 #define ASCII(T) \
 	case T: ret.column = ctx->column++; ret.line = ctx->line; ret.kind = T; return ret
 
-	ASCII(TOK_ASSIGN);
 	ASCII(TOK_ASTERISK);
 	ASCII(TOK_COMMA);
 	ASCII(TOK_CURLY_CLOSE);
@@ -1166,7 +1210,23 @@ again:
 	ASCII(TOK_PERCENT);
 	ASCII(TOK_PLUS);
 	ASCII(TOK_SEMICOLON);
+	ASCII(TOK_AND);
 #undef ASCII
+
+	case '=':
+		if ((c = fgetc(ctx->source)) == '=') {
+			ret.kind = TOK_EQUAL;
+			ret.column = ctx->column;
+			ret.line = ctx->line;
+			ctx->column += 2;
+			return ret;
+		} else {
+			ungetc(c, ctx->source);
+			ret.column = ctx->column++;
+			ret.line = ctx->line;
+			ret.kind = TOK_ASSIGN;
+			return ret;
+		}
 
 	case '/':
 		if ((c = fgetc(ctx->source)) == '*') {

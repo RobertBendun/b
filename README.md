@@ -60,11 +60,11 @@ Long term goals:
         - [ ] Compound assigment `op=`
         - [ ] Index
     - [ ] Unary operators
+        - [x] Address of: `&`
         - [ ] Bitwise complement: `~`
         - [ ] Negation: `-`
         - [ ] Logical Not: `!`
         - [ ] Indirection: `*`
-        - [ ] Address of: `&`
         - [ ] Pre-increment/decrement
         - [ ] Post-increment/decrement
 
