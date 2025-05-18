@@ -671,7 +671,8 @@ bool parse_constant(struct parser *p, struct compiler *compiler, struct value *l
 	if (expect_token(p, &constant, TOK_INTEGER)) {
 		lhs->kind = RVALUE;
 		lhs->offset = alloc_stack(compiler);
-		printf("\tmov QWORD [rbp-%zu], %"PRIu64"\n", lhs->offset, constant.ival);
+		printf("\tmov rax, %"PRIu64"\n", constant.ival);
+		printf("\tmov QWORD [rbp-%zu], rax\n", lhs->offset);
 		return true;
 	}
 	if (expect_token(p, &constant, TOK_CHARACTER)) {
@@ -841,6 +842,8 @@ void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, str
 	struct value rhs = { .kind = RVALUE, .offset = alloc_stack(compiler) };
 
 	if (!parse_unary(p, compiler, &rhs)) {
+		struct token tok = peek_token(p);
+		printf("%s:%d:%d: %s\n", tok.filename, tok.line, tok.column, token_short_name(tok));
 		assert(0 && "report an error");
 	}
 
