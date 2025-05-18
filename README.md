@@ -61,10 +61,10 @@ Long term goals:
         - [ ] Index
     - [ ] Unary operators
         - [x] Address of: `&`
+        - [x] Indirection: `*`
         - [ ] Bitwise complement: `~`
         - [ ] Negation: `-`
         - [ ] Logical Not: `!`
-        - [ ] Indirection: `*`
         - [ ] Pre-increment/decrement
         - [ ] Post-increment/decrement
 
