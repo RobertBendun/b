@@ -8,7 +8,7 @@ It's B for modern systems.
 
 ### `hello, world`
 
-```b
+```c
 /* Prints hello, world and a newline to the standard output using libc */
 main()
 	extrn printf;
@@ -21,7 +21,7 @@ main()
 
 Needs to be linked with Raylib. See Makefile.
 
-```b
+```c
 main() {
 	extrn InitWindow, CloseWindow, WindowShouldClose, SetTargetFPS,
 		BeginDrawing, EndDrawing,
