@@ -1,11 +1,20 @@
 -----------------------------------------------------------
-Word addressing vs bit addressing
+Word addressing vs byte addressing
 -----------------------------------------------------------
 
-Writing functions char and lchar for addressing bits is quite awkward.
-Some nice syntax for bit level addressing would be great.
-It should be considered carefully since it splits language
-in two and may make cross platform libraries more cumbersome (for example on WebAssembly word would be 32 bit)
+So dereference and pointer arithmetic in B would operatre on bytes by default.
+I would see some functions that would either get or set specific bit lengths:
+
+i8(p) returns 8 bit signed int at p, extended to the word (respects signed bit)
+i8(p, v) writes 8 bit signed int at p, respecting sign
+u8(p), u8(p, v) same for unsigned 8 bit
+
+and similarly for i16, i32, i64, u8, u16, u32, u64 (64 versions for completness)
+
+this pattern allows us to also define floating point functions, they would do standard to integer rounding like in C when converting from float to int: f16, f32, f64, f80, f128
+
+What shoul be considered is that this solution doesn't allow for passing float values via function calls
+it may be separate or shared issue depending on the path the language takes
 
 
 -----------------------------------------------------------

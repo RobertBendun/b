@@ -422,9 +422,32 @@ bool expect_token_if(struct parser *p, struct token *tok, bool(*predicate)(enum 
 
 struct value
 {
-	enum { EMPTY, RVALUE, LVALUE } kind;
+	enum {
+		EMPTY,
+		RVALUE,
+		LVALUE_AUTO,
+		LVALUE_PTR,
+	} kind;
 	union { size_t offset; };
 };
+
+void mov_into_reg(char const* dst, struct value src)
+{
+	switch (src.kind) {
+	case LVALUE_AUTO:
+	case RVALUE:
+		printf("\tmov %s, [rbp-%zu]\n", dst, src.offset);
+		break;
+
+	case LVALUE_PTR:
+		printf("\tmov %s, [rbp-%zu]\n", dst, src.offset);
+		printf("\tmov %s, [%s]\n", dst, dst);
+		break;
+
+	case EMPTY:
+		assert(0 && "unreachable");
+	}
+}
 
 
 bool parse_expression(struct parser *p, struct compiler *compiler, struct value *result);
@@ -446,7 +469,7 @@ bool parse_return(struct parser *p, struct compiler *compiler)
 			exit(1);
 		}
 
-		printf("\tmov rax, [rbp-%zu]\n", retval.offset);
+		mov_into_reg("rax", retval);
 		printf("\tleave\n");
 		printf("\tret\n");
 
@@ -597,8 +620,7 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, struct value *r
 	}
 
 	for (size_t i = 0; i < args_count; ++i) {
-		assert(args[i].kind != EMPTY);
-		printf("\tmov %s, [rbp-%zu]\n", ABI_REGISTERS[i], args[i].offset);
+		mov_into_reg(ABI_REGISTERS[i], args[i]);
 	}
 
 
@@ -637,7 +659,7 @@ bool parse_name(struct parser *p, struct compiler *compiler, struct symbol **sym
 	}
 	// TODO: This only works for local names, other kinds of symbols are loaded differently
 	if ((*symbol)->kind == LOCAL) {
-		lhs->kind = LVALUE;
+		lhs->kind = LVALUE_AUTO;
 		lhs->offset = (*symbol)->offset;
 	}
 	return true;
@@ -729,39 +751,48 @@ bool is_operator(enum token_kind kind)
 void emit_op(struct compiler *compiler, struct value *result, struct value lhsv, enum token_kind op, struct value rhsv)
 {
 	// TODO: Static checking for this switch
-	size_t lhs = lhsv.offset;
-	size_t rhs = rhsv.offset;
-	assert(lhsv.kind != EMPTY);
-	assert(rhsv.kind != EMPTY);
-
 	// TODO: Not needed for assign
 	size_t res = alloc_stack(compiler);
 	*result = (struct value) { .kind = RVALUE, .offset = res };
 
 	switch (op) {
 	case TOK_ASSIGN:
-		assert(lhsv.kind == LVALUE);
-		printf("\tmov rax, [rbp-%zu]\n", rhs);
-		printf("\tmov [rbp-%zu], rax\n", lhs);
+		mov_into_reg("rax", rhsv);
+		switch (lhsv.kind) {
+		case LVALUE_AUTO: printf("\tmov [rbp-%zu], rax\n", lhsv.offset); break;
+		case LVALUE_PTR:  printf("\tmov rcx, [rbp-%zu]\n"
+													   "\tmov [rcx], rax\n", lhsv.offset); break;
+		case RVALUE:
+			// TODO: Line information
+			fprintf(stderr, "%s:%d:%d: error: trying to assign to rvalue\n", "(null)", -1, -1);
+			exit(1);
+
+		case EMPTY: assert(0 && "unreachable");
+		}
 		*result = lhsv;
 		return;
 
 	case TOK_PLUS:
-		printf("\tmov rax, [rbp-%zu]\n", lhs);
-		printf("\tadd rax, [rbp-%zu]\n", rhs);
+		// TODO: We can optimize this (remove one move, add accepts memory as argument)
+		mov_into_reg("rax", lhsv);
+		mov_into_reg("rcx", rhsv);
+		printf("\tadd rax, rcx\n");
 		printf("\tmov [rbp-%zu], rax\n", res);
 		return;
 
 	case TOK_MINUS:
-		printf("\tmov rax, [rbp-%zu]\n", lhs);
-		printf("\tsub rax, [rbp-%zu]\n", rhs);
+		// TODO: We can optimize this (remove one move, add accepts memory as argument)
+		mov_into_reg("rax", lhsv);
+		mov_into_reg("rcx", rhsv);
+		printf("\tsub rax, rcx\n");
 		printf("\tmov [rbp-%zu], rax\n", res);
 		return;
 
 	case TOK_ASTERISK:
-		printf("\tmov rax, [rbp-%zu]\n",  lhs);
-		printf("\timul rax, [rbp-%zu]\n", rhs);
-		printf("\tmov [rbp-%zu], rax\n",  res);
+		mov_into_reg("rax", lhsv);
+		mov_into_reg("rcx", rhsv);
+		printf("\timul rax, rcx\n");
+		printf("\tmov [rbp-%zu], rax\n", res);
 		return;
 
 	case TOK_EQUAL:
@@ -780,8 +811,9 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 				[TOK_NOT_EQUAL] = "ne",
 			};
 			printf("\txor rcx, rcx\n");
-			printf("\tmov rax, [rbp-%zu]\n", lhs);
-			printf("\tcmp rax, [rbp-%zu]\n", rhs);
+			mov_into_reg("rax", lhsv);
+			mov_into_reg("rdx", rhsv);
+			printf("\tcmp rax, rdx\n");
 			printf("\tset%s cl\n", SET_SUFFIX[op]);
 			printf("\tmov [rbp-%zu], rcx\n", res);
 			return;
@@ -789,9 +821,10 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 
 	case TOK_DIV:
 	case TOK_PERCENT:
-		printf("\tmov rax, [rbp-%zu]\n", lhs);
+		mov_into_reg("rax", lhsv);
+		mov_into_reg("rcx", rhsv);
 		printf("\tcqo\n");
-		printf("\tidiv QWORD [rbp-%zu]\n", rhs);
+		printf("\tidiv QWORD rcx\n");
 		printf("\tmov [rbp-%zu], %s\n", res, op == TOK_DIV ? "rax" : "rdx");
 		return;
 
@@ -835,7 +868,7 @@ void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, str
 	}
 }
 
-bool maybe_parse_infix(struct parser *p, struct compiler *compiler, struct value *result, struct value lhs)
+bool maybe_parse_binary(struct parser *p, struct compiler *compiler, struct value *result, struct value lhs)
 {
 	struct token op;
 	if (!expect_token_if(p, &op, is_operator)) {
@@ -850,6 +883,24 @@ bool maybe_parse_infix(struct parser *p, struct compiler *compiler, struct value
 bool parse_atomic(struct parser *p, struct compiler *compiler, struct value *lhs)
 {
 	struct symbol *symbol = NULL;
+
+	struct token open;
+	if (expect_token(p, &open, TOK_PAREN_OPEN)) {
+
+		if (!parse_expression(p, compiler, lhs)) {
+			fprintf(stderr, "%s:%d:%d: error: expected expression inside parens\n", open.filename, open.line, open.column);
+			exit(1);
+		}
+
+		struct token close;
+		if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
+			fprintf(stderr, "%s:%d:%d: error: expected close paren, got %s\n", close.filename, close.line, close.column, token_short_name(close));
+			fprintf(stderr, "%s:%d:%d: note: opened paren here\n", open.filename, open.line, open.column);
+			exit(1);
+		}
+
+		return true;
+	}
 
 	if (parse_constant(p, compiler, lhs))
 		return true;
@@ -878,12 +929,12 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 	struct token and_;
 	if (expect_token(p, &and_, TOK_AND)) {
 		struct value val;
-		if (!parse_atomic(p, compiler, &val)) {
-			fprintf(stderr, "%s:%d:%d: error: expected atomic expression for unary operator\n", and_.filename, and_.line, and_.column);
+		if (!parse_unary(p, compiler, &val)) {
+			fprintf(stderr, "%s:%d:%d: error: expected atomic expression for address of operator\n", and_.filename, and_.line, and_.column);
 			exit(1);
 		}
 
-		if (val.kind != LVALUE) {
+		if (val.kind != LVALUE_AUTO) {
 			fprintf(stderr, "%s:%d:%d: error: address of operator expects lvalue\n", and_.filename, and_.line, and_.column);
 			exit(1);
 		}
@@ -894,6 +945,27 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 		return true;
 	}
 
+	struct token deref;
+	if (expect_token(p, &deref, TOK_ASTERISK)) {
+		struct value val;
+		if (!parse_unary(p, compiler, &val)) {
+			fprintf(stderr, "%s:%d:%d: error: expected atomic expression for dereference\n", deref.filename, deref.line, deref.column);
+			exit(1);
+		}
+
+		switch (val.kind) {
+		case LVALUE_AUTO:
+		case RVALUE:
+			*result = (struct value) { .kind = LVALUE_PTR, .offset = val.offset };
+			break;
+
+		case LVALUE_PTR: assert(0 && "not implemented yet");
+
+		case EMPTY: assert(0 && "unreachable");
+		}
+		return true;
+	}
+
 	return parse_atomic(p, compiler, result);
 }
 
@@ -901,7 +973,7 @@ bool parse_expression(struct parser *p, struct compiler *compiler, struct value 
 {
 	struct value lhs;
 	if (parse_unary(p, compiler, &lhs)) {
-		return maybe_parse_infix(p, compiler, result, lhs);
+		return maybe_parse_binary(p, compiler, result, lhs);
 	}
 	return false;
 }
@@ -934,8 +1006,7 @@ bool parse_while(struct parser *p, struct compiler *compiler)
 		exit(2);
 	}
 
-	assert(cond.kind != EMPTY);
-	printf("\tmov rax, [rbp-%zu]\n", cond.offset);
+	mov_into_reg("rax", cond);
 	printf("\tcmp rax, 0\n");
 	printf("\tje .local_%zu\n", loop_exit);
 
@@ -985,7 +1056,7 @@ bool parse_if(struct parser *p, struct compiler *compiler)
 	}
 
 	assert(cond.kind != EMPTY);
-	printf("\tmov rax, [rbp-%zu]\n", cond.offset);
+	mov_into_reg("rax", cond);
 	printf("\tcmp rax, 0\n");
 	printf("\tje .local_%zu\n", else_label);
 
