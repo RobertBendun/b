@@ -696,67 +696,45 @@ bool parse_constant(struct parser *p, struct compiler *compiler, struct value *l
 	return false;
 }
 
+struct binop {
+	enum token_kind op;
+	enum associativity { ASSOC_LEFT, ASSOC_RIGHT } associativity;
+};
+
+struct binop* binary_operators[] = {
+	(struct binop[]) { {TOK_ASSIGN, ASSOC_RIGHT}, {}  },
+	(struct binop[]) { {TOK_EQUAL}, {TOK_NOT_EQUAL}, {} },
+	(struct binop[]) { {TOK_GREATER}, {TOK_GREATER_OR_EQ}, {TOK_LESS}, {TOK_LESS_OR_EQ}, {} },
+	(struct binop[]) { {TOK_PLUS}, {TOK_MINUS}, {} },
+	(struct binop[]) { {TOK_ASTERISK}, {TOK_DIV}, {TOK_PERCENT}, {} },
+	(struct binop[]) { {TOK_AND}, {} },
+	(struct binop[]) { {TOK_XOR}, {} },
+	(struct binop[]) { {TOK_OR}, {} },
+};
+
+
 size_t precedense(enum token_kind kind)
 {
-	// TODO: Static checking for this switch
-	switch (kind) {
-	case TOK_ASSIGN:
-		return 100;
-
-	case TOK_EQUAL:
-	case TOK_NOT_EQUAL:
-		return 150;
-
-	case TOK_GREATER:
-	case TOK_GREATER_OR_EQ:
-	case TOK_LESS:
-	case TOK_LESS_OR_EQ:
-		return 200;
-
-	case TOK_PLUS:
-	case TOK_MINUS:
-		return 300;
-
-	case TOK_DIV:
-	case TOK_ASTERISK:
-	case TOK_PERCENT:
-		return 400;
-
-	case TOK_AND:
-		return 500;
-
-	case TOK_XOR:
-		return 600;
-
-	case TOK_OR:
-		return 700;
-
-	default:
-		return 0;
+	for (size_t i = 0; i < ARRAY_LEN(binary_operators); ++i) {
+		for (size_t j = 0; binary_operators[i][j].op != 0; ++j) {
+			if (binary_operators[i][j].op == kind) {
+				return i+1;
+			}
+		}
 	}
+	return 0;
 }
 
-enum { ASSOC_LEFT, ASSOC_RIGHT } associativity(enum token_kind kind)
+enum associativity associativity(enum token_kind kind)
 {
-	// TODO: Static checking for this switch
-	switch (kind) {
-	case TOK_ASSIGN:
-		return ASSOC_RIGHT;
-
-	case TOK_AND:
-	case TOK_ASTERISK:
-	case TOK_DIV:
-	case TOK_LESS:
-	case TOK_MINUS:
-	case TOK_OR:
-	case TOK_PERCENT:
-	case TOK_PLUS:
-	case TOK_XOR:
-		return ASSOC_LEFT;
-
-	default:
-		assert(false && "unreachable");
+	for (size_t i = 0; i < ARRAY_LEN(binary_operators); ++i) {
+		for (size_t j = 0; binary_operators[i][j].op != 0; ++j) {
+			if (binary_operators[i][j].op == kind) {
+				return binary_operators[i][j].associativity;
+			}
+		}
 	}
+	assert(0 && "unreachable");
 }
 
 
@@ -798,11 +776,11 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 		{
 			static char const* BIN_INSTR[] = {
 				[TOK_AND] = "and",
-				[TOK_OR] = "or",
-				[TOK_XOR] = "xor",
 				[TOK_ASTERISK] = "imul",
-				[TOK_PLUS] = "add",
 				[TOK_MINUS] = "sub",
+				[TOK_OR] = "or",
+				[TOK_PLUS] = "add",
+				[TOK_XOR] = "xor",
 			};
 			// TODO: We can optimize this (remove one move, add accepts memory as argument)
 			mov_into_reg("rax", lhsv);
