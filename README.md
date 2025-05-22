@@ -93,12 +93,12 @@ main() {
     - [x] Constant
     - [ ] Binary operators
         - [x] Additive operators: `+ -`
-        - [x] Multiplicative operators: `* / %`
         - [x] Assigment `=`
+        - [x] Bitwise operators: `& ^ |`
+        - [x] Multiplicative operators: `* / %`
         - [x] Relational operatos: `< > <= >= == !=`
-        - [ ] Shift operators: `<< >>`
-        - [ ] Bitwise operators: `& ^ |`
         - [ ] Logical (short circuting): `&& ||`
+        - [ ] Shift operators: `<< >>`
         - [ ] Compound assigment `op=`
         - [ ] Index
     - [ ] Unary operators

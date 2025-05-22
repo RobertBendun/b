@@ -88,11 +88,13 @@ struct token
 		TOK_LESS = '<',
 		TOK_LOGICAL_NOT = '!',
 		TOK_MINUS = '-',
+		TOK_OR = '|',
 		TOK_PAREN_CLOSE = ')',
 		TOK_PAREN_OPEN = '(',
 		TOK_PERCENT = '%',
 		TOK_PLUS = '+',
 		TOK_SEMICOLON = ';',
+		TOK_XOR = '^',
 
 		// Make sure that non ascii tokens start after ascii letters
 		TOK_IDENTIFIER = 127,
@@ -164,6 +166,8 @@ char const* token_kind_short_name(enum token_kind kind)
 	case TOK_STRING: return "string literal";
 	case TOK_SWITCH: return "switch keyword";
 	case TOK_WHILE: return "while keyword";
+	case TOK_OR: return "|";
+	case TOK_XOR: return "^";
 	}
 
 	assert(0 && "unreachable");
@@ -718,6 +722,15 @@ size_t precedense(enum token_kind kind)
 	case TOK_PERCENT:
 		return 400;
 
+	case TOK_AND:
+		return 500;
+
+	case TOK_XOR:
+		return 600;
+
+	case TOK_OR:
+		return 700;
+
 	default:
 		return 0;
 	}
@@ -730,12 +743,15 @@ enum { ASSOC_LEFT, ASSOC_RIGHT } associativity(enum token_kind kind)
 	case TOK_ASSIGN:
 		return ASSOC_RIGHT;
 
-	case TOK_LESS:
-	case TOK_PLUS:
-	case TOK_MINUS:
-	case TOK_DIV:
+	case TOK_AND:
 	case TOK_ASTERISK:
+	case TOK_DIV:
+	case TOK_LESS:
+	case TOK_MINUS:
+	case TOK_OR:
 	case TOK_PERCENT:
+	case TOK_PLUS:
+	case TOK_XOR:
 		return ASSOC_LEFT;
 
 	default:
@@ -774,27 +790,27 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 		return;
 
 	case TOK_PLUS:
-		// TODO: We can optimize this (remove one move, add accepts memory as argument)
-		mov_into_reg("rax", lhsv);
-		mov_into_reg("rcx", rhsv);
-		printf("\tadd rax, rcx\n");
-		printf("\tmov [rbp-%zu], rax\n", res);
-		return;
-
 	case TOK_MINUS:
-		// TODO: We can optimize this (remove one move, add accepts memory as argument)
-		mov_into_reg("rax", lhsv);
-		mov_into_reg("rcx", rhsv);
-		printf("\tsub rax, rcx\n");
-		printf("\tmov [rbp-%zu], rax\n", res);
-		return;
-
 	case TOK_ASTERISK:
-		mov_into_reg("rax", lhsv);
-		mov_into_reg("rcx", rhsv);
-		printf("\timul rax, rcx\n");
-		printf("\tmov [rbp-%zu], rax\n", res);
-		return;
+	case TOK_OR:
+	case TOK_AND:
+	case TOK_XOR:
+		{
+			static char const* BIN_INSTR[] = {
+				[TOK_AND] = "and",
+				[TOK_OR] = "or",
+				[TOK_XOR] = "xor",
+				[TOK_ASTERISK] = "imul",
+				[TOK_PLUS] = "add",
+				[TOK_MINUS] = "sub",
+			};
+			// TODO: We can optimize this (remove one move, add accepts memory as argument)
+			mov_into_reg("rax", lhsv);
+			mov_into_reg("rcx", rhsv);
+			printf("\t%s rax, rcx\n", BIN_INSTR[op]);
+			printf("\tmov [rbp-%zu], rax\n", res);
+			return;
+		}
 
 	case TOK_EQUAL:
 	case TOK_GREATER:
@@ -1266,11 +1282,13 @@ void dump_token(FILE *out, struct token tok)
 	case TOK_LESS:
 	case TOK_LOGICAL_NOT:
 	case TOK_MINUS:
+	case TOK_OR:
 	case TOK_PAREN_CLOSE:
 	case TOK_PAREN_OPEN:
 	case TOK_PERCENT:
 	case TOK_PLUS:
 	case TOK_SEMICOLON:
+	case TOK_XOR:
 		fprintf(out, "%c\n", tok.kind);
 		break;
 	}
@@ -1320,6 +1338,8 @@ again:
 	ASCII(TOK_PLUS);
 	ASCII(TOK_SEMICOLON);
 	ASCII(TOK_AND);
+	ASCII(TOK_OR);
+	ASCII(TOK_XOR);
 #undef ASCII
 
 #define ONE_OR_TWO(c1, t1, c2, t2) \
