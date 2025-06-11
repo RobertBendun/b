@@ -1,9 +1,7 @@
 /* Implementation of https://esolangs.org/wiki/Truth-machine */
 main() {
 	extrn getchar, putchar;
-	auto c;
-	c = getchar();
-	if (c - '0') {
+	if (getchar() == '1') {
 		while (1) putchar('1');
 	} else {
 		putchar('0');

@@ -5,9 +5,9 @@ main() {
 	b = 0;
 	while (i < 40) {
 		printf("fib(%d) = %d*n", i, a);
-		i = i + 1;
+		i += 1;
 		t = a;
-		a = a + b;
+		a += b;
 		b = t;
 	}
 }

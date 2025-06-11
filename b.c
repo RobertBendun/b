@@ -1008,7 +1008,7 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 			*result = (struct value) { .kind = LVALUE_PTR, .offset = val.offset };
 			break;
 
-		case LVALUE_PTR: assert(0 && "not implemented yet");
+		NOT_IMPLEMENTED_FOR(LVALUE_PTR);
 
 		case EMPTY: assert(0 && "unreachable");
 		}

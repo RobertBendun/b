@@ -6,7 +6,7 @@ main(argc, argv) {
 
 	while (i < argc) {
 		printf("%s", *(argv + i * 8));
-		i = i + 1;
+		i += 1;
 		if (i != argc) {
 			printf(" ");
 		}

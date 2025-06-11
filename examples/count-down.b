@@ -5,7 +5,7 @@ main() {
 	a = 10;
 	while (a) {
 		printf("%d*n", a);
-		a = a - 1;
+		a -= 1;
 		sleep(1);
 	}
 }
