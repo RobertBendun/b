@@ -8,6 +8,8 @@ inline assembly - by just allowing programmer to put raw bytes inside
 executable section. This will allow for cumbersome but self contained
 definition of libb in B.
 
+Note that one must account for endiannes when doing this translation.
+
 // $ cat syscall.asm
 // format ELF64
 // section ".text" executable

@@ -3,3 +3,4 @@ b
 *.o
 ./examples/empty
 ./examples/non-zero-exit-code
+java
