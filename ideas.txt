@@ -1,4 +1,20 @@
 -----------------------------------------------------------
+goto
+-----------------------------------------------------------
+
+`auto` allocates data on the stack. Currently we emit stack resize on possibly each stack resize.
+Additionally on each `}` we decrease stack size to the previous one, recorded by `{`.
+
+This makes `goto` extremely dengerous - leading to the potential linear stack allocation for loops
+or maybe even stack frame destruction by the wrong usage of `}`.
+
+Example dengerous fragments:
+
+
+// Linear allocation:
+again: { auto a; goto again; }
+
+-----------------------------------------------------------
 Word addressing vs byte addressing
 -----------------------------------------------------------
 
