@@ -12,15 +12,13 @@ main() {
 
 
 	while (WindowShouldClose() == 0) {
-		/* TODO: Unary - */
-		if (x+100 >= 800) dx = (0 - 1) * dx;
-		if (x <=   0) dx = (0 - 1) * dx;
-		if (y+60 >= 600) dy = (0 - 1) * dy;
-		if (y <=   0) dy = (0 - 1) * dy;
+		if (x+100 >= 800) dx *= -1;
+		if (x     <=   0) dx *= -1;
+		if (y+60  >= 600) dy *= -1;
+		if (y     <=   0) dy *= -1;
 
-		/* TODO: Compund assigment += */
-		x = x + dx * 2;
-		y = y + dy * 2;
+		x += dx * 2;
+		y += dy * 2;
 
 		BeginDrawing();
 		ClearBackground(0);

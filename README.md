@@ -36,13 +36,13 @@ main() {
 
 
 	while (WindowShouldClose() == 0) {
-		if (x+100 >= 800) dx = (0 - 1) * dx;
-		if (x <=   0) dx = (0 - 1) * dx;
-		if (y+60 >= 600) dy = (0 - 1) * dy;
-		if (y <=   0) dy = (0 - 1) * dy;
+		if (x+100 >= 800) dx *= -1;
+		if (x     <=   0) dx *= -1;
+		if (y+60  >= 600) dy *= -1;
+		if (y     <=   0) dy *= -1;
 
-		x = x + dx * 2;
-		y = y + dy * 2;
+		x += dx * 2;
+		y += dy * 2;
 
 		BeginDrawing();
 		ClearBackground(0);
@@ -97,15 +97,15 @@ main() {
         - [x] Bitwise operators: `& ^ |`
         - [x] Multiplicative operators: `* / %`
         - [x] Relational operatos: `< > <= >= == !=`
+        - [x] Compound assigment `op=`
         - [ ] Logical (short circuting): `&& ||`
         - [ ] Shift operators: `<< >>`
-        - [ ] Compound assigment `op=`
         - [ ] Index
     - [ ] Unary operators
         - [x] Address of: `&`
         - [x] Indirection: `*`
+        - [x] Negation: `-`
         - [ ] Bitwise complement: `~`
-        - [ ] Negation: `-`
         - [ ] Logical Not: `!`
         - [ ] Pre-increment/decrement
         - [ ] Post-increment/decrement

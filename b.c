@@ -8,7 +8,10 @@
 #include <string.h>
 
 
-char const* ABI_REGISTERS[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+#define NOT_IMPLEMENTED_FOR(VALUE) \
+	case VALUE: do { printf("%s:%d: case not implemented yet: %s\n", __FILE__, __LINE__, #VALUE); abort(); } while (0)
+
+static char const* ABI_REGISTERS[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
 
 struct string_builder
 {
@@ -120,6 +123,11 @@ struct token
 		TOK_LESS_OR_EQ,
 		TOK_GREATER_OR_EQ,
 		TOK_NOT_EQUAL,
+
+		TOK_ASSIGN_ADD,
+		TOK_ASSIGN_SUB,
+		TOK_ASSIGN_MUL,
+		TOK_ASSIGN_DIV,
 	} kind;
 
 	char const* text;
@@ -168,6 +176,11 @@ char const* token_kind_short_name(enum token_kind kind)
 	case TOK_WHILE: return "while keyword";
 	case TOK_OR: return "|";
 	case TOK_XOR: return "^";
+	case TOK_ASSIGN_ADD: return "+=";
+	case TOK_ASSIGN_SUB: return "-=";
+	case TOK_ASSIGN_MUL: return "*=";
+	case TOK_ASSIGN_DIV: return "/=";
+
 	}
 
 	assert(0 && "unreachable");
@@ -701,8 +714,13 @@ struct binop {
 	enum associativity { ASSOC_LEFT, ASSOC_RIGHT } associativity;
 };
 
+// TODO: This works on Clang and GCC but maybe not on other compilers
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
+// TODO: Note that we generaly have the same associativity for the same precedense level
 struct binop* binary_operators[] = {
-	(struct binop[]) { {TOK_ASSIGN, ASSOC_RIGHT}, {}  },
+	(struct binop[]) { {TOK_ASSIGN, ASSOC_RIGHT}, {TOK_ASSIGN_ADD, ASSOC_RIGHT}, {TOK_ASSIGN_SUB, ASSOC_RIGHT}, {TOK_ASSIGN_MUL, ASSOC_RIGHT}, {TOK_ASSIGN_DIV, ASSOC_RIGHT}, {}  },
 	(struct binop[]) { {TOK_EQUAL}, {TOK_NOT_EQUAL}, {} },
 	(struct binop[]) { {TOK_GREATER}, {TOK_GREATER_OR_EQ}, {TOK_LESS}, {TOK_LESS_OR_EQ}, {} },
 	(struct binop[]) { {TOK_PLUS}, {TOK_MINUS}, {} },
@@ -712,6 +730,7 @@ struct binop* binary_operators[] = {
 	(struct binop[]) { {TOK_OR}, {} },
 };
 
+#pragma GCC diagnostic pop
 
 size_t precedense(enum token_kind kind)
 {
@@ -753,6 +772,39 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 	switch (op) {
 	case TOK_ASSIGN:
 		mov_into_reg("rax", rhsv);
+		switch (lhsv.kind) {
+		case LVALUE_AUTO: printf("\tmov [rbp-%zu], rax\n", lhsv.offset); break;
+		case LVALUE_PTR:  printf("\tmov rcx, [rbp-%zu]\n"
+													   "\tmov [rcx], rax\n", lhsv.offset); break;
+		case RVALUE:
+			// TODO: Line information
+			fprintf(stderr, "%s:%d:%d: error: trying to assign to rvalue\n", "(null)", -1, -1);
+			exit(1);
+
+		case EMPTY: assert(0 && "unreachable");
+		}
+		*result = lhsv;
+		return;
+
+	case TOK_ASSIGN_ADD:
+	case TOK_ASSIGN_DIV:
+	case TOK_ASSIGN_MUL:
+	case TOK_ASSIGN_SUB:
+		mov_into_reg("rax", lhsv);
+		mov_into_reg("rcx", rhsv);
+
+		switch (op) {
+		case TOK_ASSIGN_MUL: printf("\timul rax, rcx\n"); break;
+		case TOK_ASSIGN_ADD: printf("\tadd rax, rcx\n"); break;
+		case TOK_ASSIGN_SUB: printf("\tsub rax, rcx\n"); break;
+		case TOK_ASSIGN_DIV:
+			printf("\tcqo\n");
+			printf("\tidiv QWORD rcx\n");
+			break;
+		default:
+			assert(0 && "unreachable");
+		}
+
 		switch (lhsv.kind) {
 		case LVALUE_AUTO: printf("\tmov [rbp-%zu], rax\n", lhsv.offset); break;
 		case LVALUE_PTR:  printf("\tmov rcx, [rbp-%zu]\n"
@@ -963,6 +1015,32 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 		return true;
 	}
 
+	struct token minus;
+	if (expect_token(p, &minus, TOK_MINUS)) {
+		struct value val = {};
+		if (!parse_unary(p, compiler, &val)) {
+			fprintf(stderr, "%s:%d:%d: error: expected atomic expression for unary minus\n", minus.filename, minus.line, minus.column);
+			exit(1);
+		}
+
+		switch (val.kind) {
+		case RVALUE:
+		case LVALUE_AUTO:
+			printf("\tneg QWORD [rbp-%zu]\n", val.offset);
+			*result = val;
+			return true;
+
+		case LVALUE_PTR:
+			mov_into_reg("rax", val);
+			printf("\tneg rax\n");
+			*result = (struct value) { .kind = RVALUE, .offset = alloc_stack(compiler) };
+			printf("\tmov [rbp-%zu], rax\n", result->offset);
+			return true;
+
+		NOT_IMPLEMENTED_FOR(EMPTY);
+		}
+	}
+
 	return parse_atomic(p, compiler, result);
 }
 
@@ -988,7 +1066,6 @@ bool parse_while(struct parser *p, struct compiler *compiler)
 		fprintf(stderr, "%s:%d:%d: error: expected open paren after while, got %s\n", open.filename, open.line, open.column, token_short_name(open));
 		exit(2);
 	}
-
 
 	enter_scope(compiler);
 
@@ -1237,6 +1314,11 @@ void dump_token(FILE *out, struct token tok)
 		fprintf(out, ">=\n");
 		break;
 
+	case TOK_ASSIGN_ADD: fprintf(out, "+=\n"); break;
+	case TOK_ASSIGN_SUB: fprintf(out, "-=\n"); break;
+	case TOK_ASSIGN_MUL: fprintf(out, "*=\n"); break;
+	case TOK_ASSIGN_DIV: fprintf(out, "/=\n"); break;
+
 	case TOK_AUTO:
 	case TOK_CASE:
 	case TOK_ELSE:
@@ -1305,15 +1387,12 @@ again:
 #define ASCII(T) \
 	case T: ret.column = ctx->column++; ret.line = ctx->line; ret.kind = T; return ret
 
-	ASCII(TOK_ASTERISK);
 	ASCII(TOK_COMMA);
 	ASCII(TOK_CURLY_CLOSE);
 	ASCII(TOK_CURLY_OPEN);
-	ASCII(TOK_MINUS);
 	ASCII(TOK_PAREN_CLOSE);
 	ASCII(TOK_PAREN_OPEN);
 	ASCII(TOK_PERCENT);
-	ASCII(TOK_PLUS);
 	ASCII(TOK_SEMICOLON);
 	ASCII(TOK_AND);
 	ASCII(TOK_OR);
@@ -1340,6 +1419,9 @@ again:
 	ONE_OR_TWO('<', TOK_LESS, '=', TOK_LESS_OR_EQ);
 	ONE_OR_TWO('>', TOK_GREATER, '=', TOK_GREATER_OR_EQ);
 	ONE_OR_TWO('!', TOK_LOGICAL_NOT, '=', TOK_NOT_EQUAL);
+	ONE_OR_TWO('+', TOK_PLUS, '=', TOK_ASSIGN_ADD);
+	ONE_OR_TWO('-', TOK_MINUS, '=', TOK_ASSIGN_SUB);
+	ONE_OR_TWO('*', TOK_ASTERISK, '=', TOK_ASSIGN_MUL);
 #undef ONE_OR_TWO
 
 	case '/':
@@ -1356,6 +1438,12 @@ again:
 				prev = c;
 			}
 			goto again;
+		} else if (c == '=') {
+			ret.kind = TOK_ASSIGN_DIV;
+			ret.column = ctx->column;
+			ret.line = ctx->line;
+			ctx->column += 2;
+			return ret;
 		} else {
 			ungetc(c, ctx->source);
 			ret.column = ctx->column++;
