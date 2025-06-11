@@ -98,6 +98,8 @@ struct token
 		TOK_PLUS = '+',
 		TOK_SEMICOLON = ';',
 		TOK_XOR = '^',
+		TOK_QUESTION_MARK = '?',
+		TOK_COLON = ':',
 
 		// Make sure that non ascii tokens start after ascii letters
 		TOK_IDENTIFIER = 127,
@@ -141,6 +143,8 @@ char const* token_kind_short_name(enum token_kind kind)
 {
 	switch (kind) {
 	case TOK_AND: return "&";
+	case TOK_COLON: return ":";
+	case TOK_QUESTION_MARK: return "?";
 	case TOK_ASSIGN: return "=";
 	case TOK_ASTERISK: return "*";
 	case TOK_AUTO: return "auto keyword";
@@ -721,6 +725,7 @@ struct binop {
 // TODO: Note that we generaly have the same associativity for the same precedense level
 struct binop* binary_operators[] = {
 	(struct binop[]) { {TOK_ASSIGN, ASSOC_RIGHT}, {TOK_ASSIGN_ADD, ASSOC_RIGHT}, {TOK_ASSIGN_SUB, ASSOC_RIGHT}, {TOK_ASSIGN_MUL, ASSOC_RIGHT}, {TOK_ASSIGN_DIV, ASSOC_RIGHT}, {}  },
+	(struct binop[]) { {TOK_QUESTION_MARK, ASSOC_RIGHT}, {} },
 	(struct binop[]) { {TOK_EQUAL}, {TOK_NOT_EQUAL}, {} },
 	(struct binop[]) { {TOK_GREATER}, {TOK_GREATER_OR_EQ}, {TOK_LESS}, {TOK_LESS_OR_EQ}, {} },
 	(struct binop[]) { {TOK_PLUS}, {TOK_MINUS}, {} },
@@ -884,6 +889,40 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 
 void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, struct value *result, struct value lhs)
 {
+	// Infrastructure for ternary:
+	// result = condition ? then : else_
+	struct value condition, then, else_;
+	size_t else_label, end_label;
+
+	if (op.kind == TOK_QUESTION_MARK) {
+		else_label = compiler->last_local_id++;
+		end_label = compiler->last_local_id++;
+		condition = lhs;
+
+		// TODO: if both then and else branches are lvalues we can return an lvalue
+		*result = (struct value) { .kind = RVALUE, .offset = alloc_stack(compiler) };
+
+		mov_into_reg("rax", condition);
+		printf("\tcmp rax, 0\n");
+		printf("\tje .local_%zu\n", else_label);
+
+		if (!parse_expression(p, compiler, &then)) {
+			fprintf(stderr, "%s:%d:%d: error: expected expression between ? and : of ternary operator\n", op.filename, op.line, op.column);
+			exit(1);
+		}
+
+		mov_into_reg("rax", then);
+		printf("\tmov [rbp-%zu], rax\n", result->offset);
+		printf("\tjmp .local_%zu\n", end_label);
+		printf(".local_%zu:\n", else_label);
+
+		struct token colon;
+		if (!expect_token(p, &colon, TOK_COLON)) {
+			fprintf(stderr, "%s:%d:%d: expected : after expression started with ?, got %s instead\n", colon.filename, colon.line, colon.column, token_short_name(colon));
+			exit(1);
+		}
+	}
+
 	// TODO: See if we can get away without allocating this varibale
 	struct value rhs = { .kind = RVALUE, .offset = alloc_stack(compiler) };
 
@@ -895,9 +934,18 @@ void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, str
 
 	struct token next;
 	if (!expect_token_if(p, &next, is_operator)) {
+		if (op.kind == TOK_QUESTION_MARK) {
+			else_ = rhs;
+			mov_into_reg("rax", else_);
+			printf("\tmov [rbp-%zu], rax\n", result->offset);
+			printf(".local_%zu:\n", end_label);
+			return;
+		}
 		emit_op(compiler, result, lhs, op.kind, rhs);
 		return;
 	}
+
+	assert(op.kind != TOK_QUESTION_MARK && "not implemented yet for ternary");
 
 	// For expression a op b next c, op has higher precedense then next so we
 	// should parse as (a op b) next c. otherwise we should parse a op (b next c)
@@ -1349,6 +1397,8 @@ void dump_token(FILE *out, struct token tok)
 	case TOK_PLUS:
 	case TOK_SEMICOLON:
 	case TOK_XOR:
+	case TOK_QUESTION_MARK:
+	case TOK_COLON:
 		fprintf(out, "%c\n", tok.kind);
 		break;
 	}
@@ -1397,6 +1447,8 @@ again:
 	ASCII(TOK_AND);
 	ASCII(TOK_OR);
 	ASCII(TOK_XOR);
+	ASCII(TOK_QUESTION_MARK);
+	ASCII(TOK_COLON);
 #undef ASCII
 
 #define ONE_OR_TWO(c1, t1, c2, t2) \
