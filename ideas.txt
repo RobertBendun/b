@@ -1,4 +1,60 @@
 -----------------------------------------------------------
+Using simple definitions as an alternative to inline asm
+-----------------------------------------------------------
+
+By adding mechanism to declare where simple definitions are located
+inside an object file we can provide very primitive support for an
+inline assembly - by just allowing programmer to put raw bytes inside
+executable section. This will allow for cumbersome but self contained
+definition of libb in B.
+
+// $ cat syscall.asm
+// format ELF64
+// section ".text" executable
+// ; TODO: Save registers if required
+// ; Shift all registers left so
+// ; syscall(a, b, c, d) is the same as
+// ; calling syscall number a with arguments b, c, d
+// public _syscall as 'syscall'
+// _syscall:
+//         push rbp
+//         mov rbp, rsp
+//         mov rax, rdi
+//         mov rdi, rsi
+//         mov rsi, rdx
+//         mov rdx, rcx
+//         syscall
+//         leave
+//         ret
+// $ fasm syscall.asm
+// $ objdump -d syscall.o
+// 0000000000000000 <syscall>:
+//    0:   55                      push   %rbp
+//    1:   48 89 e5                mov    %rsp,%rbp
+//    4:   48 89 f8                mov    %rdi,%rax
+//    7:   48 89 f7                mov    %rsi,%rdi
+//    a:   48 89 d6                mov    %rdx,%rsi
+//    d:   48 89 ca                mov    %rcx,%rdx
+//   10:   0f 05                   syscall
+//   12:   c9                      leave
+//   13:   c3                      ret
+#[section("executable")]
+syscall
+	0xe5_89_48_55,
+	0x48_f8_89_48,
+	0x48_f7_89_48,
+	0x48_d6_89_48,
+	0x0f_ca_89_48,
+	0x00_c3_c9_05;
+
+SYS_write 1;
+STDOUT_FILENO 1;
+
+main() {
+	syscall(SYS_write, STDOUT_FILENO, "hello, world\n", 13);
+}
+
+-----------------------------------------------------------
 goto
 -----------------------------------------------------------
 
