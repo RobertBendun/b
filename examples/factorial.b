@@ -1,8 +1,4 @@
-factorial(n) {
-	if (n)
-		return(factorial(n - 1) * n);
-	return(1);
-}
+factorial(n) return(n > 1 ? n * factorial(n-1) : 1);
 
 main() {
 	extrn printf;
