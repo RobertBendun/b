@@ -69,8 +69,8 @@ main() {
     - [x] Character literals
     - [x] String literals
     - [x] Decimal integer literals
-    - [ ] Hexadecimal integer literals
-    - [ ] Octal integer literals
+    - [x] Hexadecimal integer literals
+    - [x] Octal integer literals
     - [ ] Multicharacter literals
 - [ ] Definitions
     - [x] Functions

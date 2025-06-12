@@ -22,7 +22,7 @@ main() {
 
 		BeginDrawing();
 		ClearBackground(0);
-		DrawRectangle(x, y, 100, 60, 4278255360);
+		DrawRectangle(x, y, 100, 60, 0xff80ff00);
 		EndDrawing();
 	}
 

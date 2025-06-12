@@ -1421,6 +1421,16 @@ uint64_t escape_seq(char c, char const* filename, int line, int column)
 	}
 }
 
+int ishexdigit(int c)
+{
+	return isdigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+bool startswith(char const *str, char const *prefix)
+{
+	return strncmp(str, prefix, strlen(prefix)) == 0;
+}
+
 struct token scan(struct tokenizer *ctx)
 {
 	int c;
@@ -1591,37 +1601,53 @@ again:
 			goto again;
 		}
 
-		if (isdigit(c)) {
-			ret.column = ctx->column++;
-			ret.line = ctx->line;
+		assert(buf.count == 0);
+		ret.column = ctx->column;
+		ret.line = ctx->line;
 
+		// TODO: Support UTF-8
+		for (; isalnum(c) || c == '_'; c = fgetc(ctx->source)) {
 			da_append(&buf, c);
-			while ((c = fgetc(ctx->source)) != EOF && isdigit(c)) {
-				da_append(&buf, c);
-				ctx->column++;
-			}
-			da_append(&buf, '\0');
-			ungetc(c, ctx->source);
+			++ctx->column;
+		}
+		da_append(&buf, '\0');
+		ungetc(c, ctx->source);
+
+		ret.text = buf.items;
+
+		if (startswith(buf.items, "0x") || startswith(buf.items, "0X")) {
 			ret.kind = TOK_INTEGER;
-			ret.text = buf.items;
-			int r = sscanf(ret.text, "%lu", &ret.ival);
-			assert(r == 1);
+			char *end;
+			ret.ival = strtoull(buf.items, &end, 16);
+			if (*end != '\0') {
+				fprintf(stderr, "%s:%d:%d: Invalid hexadecimal literal: %s\n", ret.filename, ret.line, ret.column, buf.items);
+			}
 			return ret;
 		}
 
-		if (isalpha(c) || c == '_') {
-			ret.column = ctx->column++;
-			ret.line = ctx->line;
-
-			da_append(&buf, c);
-			while ((c = fgetc(ctx->source)) != EOF && (isalnum(c) || c == '_')) {
-				da_append(&buf, c);
-				ctx->column++;
+		if (startswith(buf.items, "0") || startswith(buf.items, "0o")) {
+			ret.kind = TOK_INTEGER;
+			char *end;
+			ret.ival = strtoull((buf.items[1] == 'o' ? 2 : 1) + buf.items, &end, 8);
+			if (*end != '\0') {
+				fprintf(stderr, "%s:%d:%d: Invalid octal literal: %s\n", ret.filename, ret.line, ret.column, buf.items);
 			}
-			da_append(&buf, '\0');
-			ungetc(c, ctx->source);
+			return ret;
+		}
+
+		if (isdigit(buf.items[0])) {
+			ret.kind = TOK_INTEGER;
+			char *end;
+			ret.ival = strtoull(buf.items, &end, 10);
+			if (*end != '\0') {
+				fprintf(stderr, "%s:%d:%d: Invalid decimal literal: %s\n", ret.filename, ret.line, ret.column, buf.items);
+			}
+			return ret;
+		}
+
+
+		if (buf.items[0] != '\0') {
 			ret.kind = TOK_IDENTIFIER;
-			ret.text = buf.items;
 
 			for (size_t i = 0; i < ARRAY_LEN(KEYWORDS); ++i) {
 				if (KEYWORDS[i] && strcmp(KEYWORDS[i], ret.text) == 0) {
