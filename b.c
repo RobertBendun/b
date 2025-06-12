@@ -1431,6 +1431,61 @@ bool startswith(char const *str, char const *prefix)
 	return strncmp(str, prefix, strlen(prefix)) == 0;
 }
 
+bool scan_integer_literal(char const* source, uint64_t *result)
+{
+	char const *p = source;
+	size_t base = 10;
+	bool seen_digit = false;
+	bool require_nonempty = false;
+
+	if (startswith(p, "0x") || startswith(p, "0X")) {
+		p += 2;
+		base = 16;
+		require_nonempty = true;
+	} else if (startswith(p, "0o")) {
+		p += 2;
+		base = 8;
+		require_nonempty = true;
+	} else if (startswith(p, "0")) {
+		base = 8;
+	}
+
+	*result = 0;
+
+	for (; *p; ++p) {
+		if (*p == '_') continue;
+
+		if (__builtin_mul_overflow(*result, base, result)) {
+			assert(0 && "overflow error");
+		}
+
+		uint64_t digit = *p;
+
+		if (digit >= '0' && digit <= '9') {
+			digit -= '0';
+			seen_digit = true;
+		} else if (digit >= 'a' && digit <= 'z') {
+			digit = digit - 'a' + 10;
+			seen_digit = true;
+		} else if (digit >= 'A' && digit <= 'Z') {
+			digit = digit - 'A' + 10;
+			seen_digit = true;
+		} else {
+			return false;
+		}
+
+		if (digit >= base) {
+			return false;
+		}
+
+		if (__builtin_add_overflow(*result, digit, result)) {
+			assert(0 && "overflow error");
+		}
+	}
+
+	return (require_nonempty || seen_digit) && *p == '\0';
+}
+
 struct token scan(struct tokenizer *ctx)
 {
 	int c;
@@ -1615,36 +1670,10 @@ again:
 
 		ret.text = buf.items;
 
-		if (startswith(buf.items, "0x") || startswith(buf.items, "0X")) {
+		if (scan_integer_literal(ret.text, &ret.ival)) {
 			ret.kind = TOK_INTEGER;
-			char *end;
-			ret.ival = strtoull(buf.items, &end, 16);
-			if (*end != '\0') {
-				fprintf(stderr, "%s:%d:%d: Invalid hexadecimal literal: %s\n", ret.filename, ret.line, ret.column, buf.items);
-			}
 			return ret;
 		}
-
-		if (startswith(buf.items, "0") || startswith(buf.items, "0o")) {
-			ret.kind = TOK_INTEGER;
-			char *end;
-			ret.ival = strtoull((buf.items[1] == 'o' ? 2 : 1) + buf.items, &end, 8);
-			if (*end != '\0') {
-				fprintf(stderr, "%s:%d:%d: Invalid octal literal: %s\n", ret.filename, ret.line, ret.column, buf.items);
-			}
-			return ret;
-		}
-
-		if (isdigit(buf.items[0])) {
-			ret.kind = TOK_INTEGER;
-			char *end;
-			ret.ival = strtoull(buf.items, &end, 10);
-			if (*end != '\0') {
-				fprintf(stderr, "%s:%d:%d: Invalid decimal literal: %s\n", ret.filename, ret.line, ret.column, buf.items);
-			}
-			return ret;
-		}
-
 
 		if (buf.items[0] != '\0') {
 			ret.kind = TOK_IDENTIFIER;

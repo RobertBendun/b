@@ -3,7 +3,7 @@ dump(n) extrn printf;
 
 
 main() {
-	dump(1234567890);
+	dump(12_3456_7890);
 	dump(0xff);
 	dump(0XFF);
 
