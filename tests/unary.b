@@ -13,4 +13,7 @@ main() {
 
 	p = &a; a = 0; ++*p; printf(" 1 = %d*n", a);
 	p = &a; a = 2; --*p; printf(" 1 = %d*n", a);
+
+	a = 0; a = !a; printf(" 1 = %d*n", a);
+	a = 1; a = !a; printf(" 0 = %d*n", a);
 }

@@ -1105,6 +1105,22 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 		return true;
 	}
 
+	struct token lnot;
+	if (expect_token(p, &lnot, TOK_LOGICAL_NOT)) {
+		struct value val;
+		if (!parse_unary(p, compiler, &val)) {
+			errorf(lnot, "expected primary expression for logicla not operator\n");
+			exit(1);
+		}
+		*result = (struct value) { .kind = RVALUE, .offset = alloc_stack(compiler) };
+		mov_into_reg("rcx", val);
+		printf("\txor rax, rax\n");
+		printf("\ttest rcx, rcx\n");
+		printf("\tsete al\n");
+		printf("\tmov [rbp-%zu], rax\n", result->offset);
+		return true;
+	}
+
 	struct token pre_increment;
 	if (expect_token(p, &pre_increment, TOK_INCREMENT)) {
 		struct value val;

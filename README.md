@@ -35,7 +35,7 @@ main() {
 	SetTargetFPS(60);
 
 
-	while (WindowShouldClose() == 0) {
+	while (!WindowShouldClose()) {
 		if (x+100 >= 800) dx *= -1;
 		if (x     <=   0) dx *= -1;
 		if (y+60  >= 600) dy *= -1;
@@ -106,8 +106,8 @@ main() {
         - [x] Indirection: `*`
         - [x] Negation: `-`
         - [x] Pre-increment/decrement
+        - [x] Logical Not: `!`
         - [ ] Bitwise complement: `~`
-        - [ ] Logical Not: `!`
         - [ ] Post-increment/decrement
 
 ## Additional features inside `b.c`

@@ -11,7 +11,7 @@ main() {
 	SetTargetFPS(60);
 
 
-	while (WindowShouldClose() == 0) {
+	while (!WindowShouldClose()) {
 		if (x+100 >= 800) dx *= -1;
 		if (x     <=   0) dx *= -1;
 		if (y+60  >= 600) dy *= -1;
