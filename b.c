@@ -145,7 +145,6 @@ struct token
 	uint64_t ival;
 
 	char const *p;
-	size_t count;
 };
 
 #pragma GCC diagnostic push
