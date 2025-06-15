@@ -1,2 +1,2 @@
-(stdin):3:52: error: expected close paren, got ,
+(stdin):3:53: error: expected close paren, got ,
 (stdin):3:8: note: paren was open here

@@ -1,1 +1,1 @@
-(stdin):3:2: error: return expect ; or (, got integer literal
+(stdin):3:2: error: return expects ; or (, got integer literal

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 
 
 #define NOT_IMPLEMENTED_FOR(VALUE) \
@@ -27,7 +28,7 @@ struct string_builder
 	if ((where)->capacity == 0) { \
 		(where)->capacity = INITIAL_CAPACITY; \
 		(where)->items = malloc(sizeof(*(where)->items) * INITIAL_CAPACITY); \
-	} else if ((where)->capacity > (where)->count+1) { \
+	} else if ((where)->capacity < (where)->count+1) { \
 		(where)->capacity *= 2; \
 		(where)->items = realloc((where)->items, sizeof(*(where)->items) * (where)->capacity); \
 	} \
@@ -138,57 +139,78 @@ struct token
 	char const* text;
 	uint64_t ival;
 
-	int line, column;
-	char const* filename;
+	char const *p;
+	size_t count;
 };
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
+// Operators that share the same first character must come first
+struct {
+	enum token_kind kind;
+	char const* string;
+} SYMBOLS[] = {
+	{ TOK_EQUAL, "==" },
+	{ TOK_LESS_OR_EQ, "<=" },
+	{ TOK_GREATER_OR_EQ, ">=" },
+	{ TOK_NOT_EQUAL, "!=" },
+	{ TOK_ASSIGN_ADD, "+=" },
+	{ TOK_ASSIGN_SUB, "-=" },
+	{ TOK_ASSIGN_MUL, "*=" },
+	{ TOK_ASSIGN_DIV, "/=" },
+	{ TOK_INCREMENT, "++" },
+	{ TOK_DECREMENT, "--" },
+
+	{ TOK_AND, "&" },
+	{ TOK_ASSIGN, "=" },
+	{ TOK_ASTERISK, "*" },
+	{ TOK_COMMA, "," },
+	{ TOK_CURLY_CLOSE, "}" },
+	{ TOK_CURLY_OPEN, "{" },
+	{ TOK_DIV, "/" },
+	{ TOK_GREATER, ">" },
+	{ TOK_LESS, "<" },
+	{ TOK_LOGICAL_NOT, "!" },
+	{ TOK_MINUS, "-" },
+	{ TOK_OR, "|" },
+	{ TOK_PAREN_CLOSE, ")" },
+	{ TOK_PAREN_OPEN, "(" },
+	{ TOK_PERCENT, "%" },
+	{ TOK_PLUS, "+" },
+	{ TOK_SEMICOLON, ";" },
+	{ TOK_XOR, "^" },
+	{ TOK_QUESTION_MARK, "?" },
+	{ TOK_COLON, ":" },
+
+	{ TOK_AUTO, "auto" },
+	{ TOK_CASE, "case" },
+	{ TOK_ELSE, "else" },
+	{ TOK_EXTRN, "extrn" },
+	{ TOK_GOTO, "goto" },
+	{ TOK_IF, "if" },
+	{ TOK_RETURN, "return" },
+	{ TOK_SWITCH, "switch" },
+	{ TOK_WHILE, "while" },
+};
+
+#pragma GCC diagnostic pop
 
 char const* token_kind_short_name(enum token_kind kind)
 {
 	switch (kind) {
-	case TOK_AND: return "&";
-	case TOK_COLON: return ":";
-	case TOK_QUESTION_MARK: return "?";
-	case TOK_ASSIGN: return "=";
-	case TOK_ASTERISK: return "*";
-	case TOK_AUTO: return "auto keyword";
-	case TOK_CASE: return "case keyword";
 	case TOK_CHARACTER: return "character literal";
-	case TOK_COMMA: return ",";
-	case TOK_CURLY_CLOSE: return "}";
-	case TOK_CURLY_OPEN: return "{";
-	case TOK_DIV: return "/";
-	case TOK_ELSE: return "else keyword";
-	case TOK_EOF: return "end of file";
-	case TOK_EQUAL: return "==";
-	case TOK_EXTRN: return "extrn keyword";
-	case TOK_GOTO: return "goto keyword";
-	case TOK_GREATER: return ">";
-	case TOK_GREATER_OR_EQ: return ">=";
 	case TOK_IDENTIFIER: return "identifier";
-	case TOK_IF: return "if keyword";
 	case TOK_INTEGER: return "integer literal";
-	case TOK_LESS: return "<";
-	case TOK_LESS_OR_EQ: return "<=";
-	case TOK_LOGICAL_NOT: return "!";
-	case TOK_MINUS: return "-";
-	case TOK_NOT_EQUAL: return "!=";
-	case TOK_PAREN_CLOSE: return ")";
-	case TOK_PAREN_OPEN: return "(";
-	case TOK_PERCENT: return "%";
-	case TOK_PLUS: return "+";
-	case TOK_RETURN: return "return keyword";
-	case TOK_SEMICOLON: return ";";
+	case TOK_EOF: return "end of file";
 	case TOK_STRING: return "string literal";
-	case TOK_SWITCH: return "switch keyword";
-	case TOK_WHILE: return "while keyword";
-	case TOK_OR: return "|";
-	case TOK_XOR: return "^";
-	case TOK_ASSIGN_ADD: return "+=";
-	case TOK_ASSIGN_SUB: return "-=";
-	case TOK_ASSIGN_MUL: return "*=";
-	case TOK_ASSIGN_DIV: return "/=";
-	case TOK_INCREMENT: return "++";
-	case TOK_DECREMENT: return "--";
+
+	default:
+		for (size_t i = 0; i < ARRAY_LEN(SYMBOLS); ++i) {
+			if (SYMBOLS[i].kind == kind) {
+				return SYMBOLS[i].string;
+			}
+		}
 	}
 
 	assert(0 && "unreachable");
@@ -199,29 +221,59 @@ char const* token_short_name(struct token tok)
 	return token_kind_short_name(tok.kind);
 }
 
+static char const* source = NULL;
+
+void dump_location(FILE *out, struct token tok)
+{
+	size_t line = 1, column = 1;
+	char const *p = source;
+
+	do switch (*p) {
+	case '\n':
+		line++; [[fallthrough]];
+	case '\r':
+		column = 1;
+		break;
+	default:
+		column++;
+	} while (*++p && p != tok.p);
+
+	fprintf(out, "%s:%zu:%zu: ", "(stdin)", line, column);
+}
+
+__attribute__ ((format (printf, 2, 3)))
+void errorf(struct token tok, char const* fmt, ...)
+{
+	dump_location(stderr, tok);
+	fprintf(stderr, "error: ");
+	va_list args;
+	va_start(args, fmt);
+	vfprintf(stderr, fmt, args);
+	va_end(args);
+}
+
+__attribute__ ((format (printf, 2, 3)))
+void notef(struct token tok, char const* fmt, ...)
+{
+	dump_location(stderr, tok);
+	fprintf(stderr, "note: ");
+	va_list args;
+	va_start(args, fmt);
+	vfprintf(stderr, fmt, args);
+	va_end(args);
+}
+
+
 struct tokenizer
 {
-	FILE *source;
-	char const* filename;
-	int line, column;
+	char const* source;
 	struct string_pool strings;
+	size_t head;
 };
 
 struct token scan(struct tokenizer *ctx);
 void dump_token(FILE *out, struct token tok);
 char const* token_short_name(struct token tok);
-
-static char const* KEYWORDS[] = {
-	[TOK_AUTO]   = "auto",
-	[TOK_CASE]   = "case",
-	[TOK_ELSE]   = "else",
-	[TOK_EXTRN]  = "extrn",
-	[TOK_GOTO]   = "goto",
-	[TOK_IF]     = "if",
-	[TOK_RETURN] = "return",
-	[TOK_SWITCH] = "switch",
-	[TOK_WHILE]  = "while",
-};
 
 struct parser
 {
@@ -330,7 +382,7 @@ struct symbol define_symbol(struct compiler *compiler, struct symbol symbol, str
 	struct symbol *s;
 	if ((s = search_symbol_in_scope(compiler, symbol.name))) {
 		// TODO: Mention previous definition
-		fprintf(stderr, "%s:%d:%d: error: symbol %s has already been defined\n", name.filename, name.line, name.column, name.text);
+		errorf(name, "symbol %s has already been defined\n", name.text);
 		exit(1);
 	}
 	++compiler->last_symbol_id;
@@ -349,16 +401,36 @@ bool parse_statement(struct parser *p, struct compiler *compiler);
 
 int main()
 {
-#if 0
-	struct tokenizer tokctx = {
-		.source = stdin,
-		.filename = "(stdin)",
-		.line = 1,
-		.column = 1,
+	struct compiler compiler = {
+		.stack_current_offset = 8,
 	};
+
+
+	// TODO: optimize me
+	struct string_builder sb = {};
+
+	for (;;) {
+		char buf[4096];
+		size_t read = fread(&buf, 1, sizeof(buf), stdin);
+		if (read == 0) {
+			break;
+		}
+
+		for (size_t i = 0; i < read; ++i) {
+			da_append(&sb, buf[i]);
+		}
+	}
+	da_append(&sb, '\0');
+	source = sb.items;
+
+	struct parser parser = {
+		.tokenizer = { .source = sb.items, .head = 0, },
+	};
+
+#if 0
 	struct token tok;
 
-	while ((tok = scan(&tokctx)).kind != TOK_EOF) {
+	while ((tok = scan(&parser.tokenizer)).kind != TOK_EOF) {
 		dump_token(stdout, tok);
 	}
 
@@ -369,19 +441,6 @@ int main()
 	}
 
 #else
-	struct compiler compiler = {
-		.stack_current_offset = 8,
-	};
-
-	struct parser parser = {
-		.tokenizer = {
-			.source = stdin,
-			.filename = "(stdin)",
-			.line = 1,
-			.column = 1,
-		},
-	};
-
 	printf("format ELF64\n");
 	printf("section \".text\" executable\n");
 	parse_program(&parser, &compiler);
@@ -490,7 +549,7 @@ bool parse_return(struct parser *p, struct compiler *compiler)
 		struct value retval;
 
 		if (!parse_expression(p, compiler, &retval)) {
-			fprintf(stderr, "%s:%d:%d: error: expected rvalue\n", open.filename, open.line, open.column);
+			errorf(open, "expected rvalue\n");
 			exit(1);
 		}
 
@@ -500,19 +559,19 @@ bool parse_return(struct parser *p, struct compiler *compiler)
 
 		struct token close;
 		if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
-			fprintf(stderr, "%s:%d:%d: error: expected close paren, got %s\n", close.filename, close.line, close.column, token_short_name(close));
-			fprintf(stderr, "%s:%d:%d: note: paren was open here\n", open.filename, open.line, open.column);
+			errorf(close, "expected close paren, got %s\n", token_short_name(close));
+			notef(open, "paren was open here\n");
 			exit(2);
 		}
 		if (!expect_token(p, &semicolon, TOK_SEMICOLON)) {
-			fprintf(stderr, "%s:%d:%d: error: return expect ; after closing ), got %s\n", semicolon.filename, semicolon.line, semicolon.column, token_short_name(semicolon));
+			errorf(semicolon, "return expect ; after closing ), got %s\n", token_short_name(semicolon));
 			exit(2);
 		}
 	} else if (expect_token(p, &semicolon, TOK_SEMICOLON)) {
 		printf("\tleave\n");
 		printf("\tret\n");
 	} else {
-		fprintf(stderr, "%s:%d:%d: error: return expect ; or (, got %s\n", return_.filename, return_.line, return_.column, token_short_name(semicolon));
+		errorf(return_, "return expects ; or (, got %s\n", token_short_name(semicolon));
 		exit(2);
 	}
 	return true;
@@ -528,7 +587,7 @@ bool parse_extern(struct parser *p, struct compiler *compiler)
 	for (;;) {
 		struct token name;
 		if (!expect_token(p, &name, TOK_IDENTIFIER)) {
-			fprintf(stderr, "%s:%d:%d: error: extrn expected identifier, got %s\n", extrn.filename, extrn.line, extrn.column, token_short_name(name));
+			errorf(extrn, "extrn expected identifier, got %s\n", token_short_name(name));
 			exit(1);
 		}
 
@@ -552,7 +611,7 @@ bool parse_extern(struct parser *p, struct compiler *compiler)
 		} else if (expect_token(p, &comma, TOK_COMMA)) {
 			continue;
 		} else {
-			fprintf(stderr, "%s:%d:%d: error: extrn expected ; or comma, got %s\n", semicolon.filename, semicolon.line, semicolon.column, token_short_name(semicolon));
+			errorf(semicolon, "extrn expected ; or comma, got %s\n", token_short_name(semicolon));
 			exit(2);
 		}
 	}
@@ -570,7 +629,7 @@ bool parse_auto(struct parser *p, struct compiler *compiler)
 	for (;;) {
 		struct token name;
 		if (!expect_token(p, &name, TOK_IDENTIFIER)) {
-			fprintf(stderr, "%s:%d:%d: error: auto expected identifier, got %s\n", auto_.filename, auto_.line, auto_.column, token_short_name(name));
+			errorf(auto_, "auto expected identifier, got %s\n", token_short_name(name));
 			exit(1);
 		}
 
@@ -583,7 +642,7 @@ bool parse_auto(struct parser *p, struct compiler *compiler)
 		} else if (expect_token(p, &comma, TOK_COMMA)) {
 			continue;
 		} else {
-			fprintf(stderr, "%s:%d:%d: error: auto expected ; or comma, got %s\n", semicolon.filename, semicolon.line, semicolon.column, token_short_name(semicolon));
+			errorf(semicolon, "auto expected ; or comma, got %s\n", token_short_name(semicolon));
 			exit(2);
 		}
 	}
@@ -610,8 +669,8 @@ bool parse_compund_statement(struct parser *p, struct compiler *compiler)
 
 	struct token close;
 	if (!expect_token(p, &close, TOK_CURLY_CLOSE)) {
-		fprintf(stderr, "%s:%d:%d: error: expected close curly or statement, got %s\n", close.filename, close.line, close.column, token_short_name(close));
-		fprintf(stderr, "%s:%d:%d: note: curly was open here\n", open.filename, open.line, open.column);
+		errorf(close, "expected close curly or statement, got %s\n", token_short_name(close));
+		notef(open, "curly was open here\n");
 		exit(2);
 	}
 	return true;
@@ -633,7 +692,7 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, struct value *r
 			struct token comma;
 			if (!expect_token(p, &comma, TOK_COMMA)) {
 				if (comma.kind == TOK_PAREN_CLOSE) break;
-				fprintf(stderr, "%s:%d:%d: error: expected comma, got %s\n", comma.filename, comma.line, comma.column, token_short_name(comma));
+				errorf(comma, "expected comma, got %s\n", token_short_name(comma));
 				exit(2);
 			}
 		}
@@ -651,8 +710,8 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, struct value *r
 
 	struct token close;
 	if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
-		fprintf(stderr, "%s:%d:%d: error: expected close paren, got %s\n", close.filename, close.line, close.column, token_short_name(close));
-		fprintf(stderr, "%s:%d:%d: note: paren was open here\n", open.filename, open.line, open.column);
+		errorf(close, "expected close paren, got %s\n", token_short_name(close));
+		notef(open, "paren was open here\n");
 		exit(2);
 	}
 
@@ -679,7 +738,7 @@ bool parse_name(struct parser *p, struct compiler *compiler, struct symbol **sym
 	}
 	*symbol = search_symbol(compiler, name.text);
 	if (!*symbol) {
-		fprintf(stderr, "%s:%d:%d: error: '%s' has not been defined yet\n", name.filename, name.line, name.column, name.text);
+		errorf(name, "'%s' has not been defined yet\n", name.text);
 		exit(1);
 	}
 	// TODO: This only works for local names, other kinds of symbols are loaded differently
@@ -787,7 +846,7 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 													   "\tmov [rcx], rax\n", lhsv.offset); break;
 		case RVALUE:
 			// TODO: Line information
-			fprintf(stderr, "%s:%d:%d: error: trying to assign to rvalue\n", "(null)", -1, -1);
+			errorf((struct token){}, "trying to assign to rvalue\n");
 			exit(1);
 
 		case EMPTY: assert(0 && "unreachable");
@@ -820,7 +879,7 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 													   "\tmov [rcx], rax\n", lhsv.offset); break;
 		case RVALUE:
 			// TODO: Line information
-			fprintf(stderr, "%s:%d:%d: error: trying to assign to rvalue\n", "(null)", -1, -1);
+			errorf((struct token){}, "trying to assign to rvalue\n");
 			exit(1);
 
 		case EMPTY: assert(0 && "unreachable");
@@ -911,7 +970,7 @@ void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, str
 		printf("\tje .local_%zu\n", else_label);
 
 		if (!parse_expression(p, compiler, &then)) {
-			fprintf(stderr, "%s:%d:%d: error: expected expression between ? and : of ternary operator\n", op.filename, op.line, op.column);
+			errorf(op, "expected expression between ? and : of ternary operator\n");
 			exit(1);
 		}
 
@@ -922,7 +981,7 @@ void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, str
 
 		struct token colon;
 		if (!expect_token(p, &colon, TOK_COLON)) {
-			fprintf(stderr, "%s:%d:%d: expected : after expression started with ?, got %s instead\n", colon.filename, colon.line, colon.column, token_short_name(colon));
+			errorf(colon, "expected : after expression started with ?, got %s instead\n", token_short_name(colon));
 			exit(1);
 		}
 	}
@@ -932,7 +991,7 @@ void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, str
 
 	if (!parse_unary(p, compiler, &rhs)) {
 		struct token tok = peek_token(p);
-		printf("%s:%d:%d: %s\n", tok.filename, tok.line, tok.column, token_short_name(tok));
+		errorf(tok, "%s\n", token_short_name(tok));
 		assert(0 && "report an error");
 	}
 
@@ -989,14 +1048,14 @@ bool parse_atomic(struct parser *p, struct compiler *compiler, struct value *lhs
 	if (expect_token(p, &open, TOK_PAREN_OPEN)) {
 
 		if (!parse_expression(p, compiler, lhs)) {
-			fprintf(stderr, "%s:%d:%d: error: expected expression inside parens\n", open.filename, open.line, open.column);
+			errorf(open, "expected expression inside parens\n");
 			exit(1);
 		}
 
 		struct token close;
 		if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
-			fprintf(stderr, "%s:%d:%d: error: expected close paren, got %s\n", close.filename, close.line, close.column, token_short_name(close));
-			fprintf(stderr, "%s:%d:%d: note: opened paren here\n", open.filename, open.line, open.column);
+			errorf(close, "expected close paren, got %s\n", token_short_name(close));
+			notef(open, "opened paren here\n");
 			exit(1);
 		}
 
@@ -1031,12 +1090,12 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 	if (expect_token(p, &and_, TOK_AND)) {
 		struct value val;
 		if (!parse_unary(p, compiler, &val)) {
-			fprintf(stderr, "%s:%d:%d: error: expected atomic expression for address of operator\n", and_.filename, and_.line, and_.column);
+			errorf(and_, "expected atomic expression for address of operator\n");
 			exit(1);
 		}
 
 		if (val.kind != LVALUE_AUTO) {
-			fprintf(stderr, "%s:%d:%d: error: address of operator expects lvalue\n", and_.filename, and_.line, and_.column);
+			errorf(and_, "address of operator expects lvalue\n");
 			exit(1);
 		}
 
@@ -1050,7 +1109,7 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 	if (expect_token(p, &pre_increment, TOK_INCREMENT)) {
 		struct value val;
 		if (!parse_unary(p, compiler, &val)) {
-			fprintf(stderr, "%s:%d:%d: error: expected atomic expression for pre-increment operator\n", and_.filename, and_.line, and_.column);
+			errorf(and_, "expected atomic expression for pre-increment operator\n");
 			exit(1);
 		}
 
@@ -1067,7 +1126,7 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 			break;
 
 		default:
-			fprintf(stderr, "%s:%d:%d: error: pre-increment operator expects lvalue\n", and_.filename, and_.line, and_.column);
+			errorf(and_, "pre-increment operator expects lvalue\n");
 			exit(1);
 		}
 		return true;
@@ -1077,7 +1136,7 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 	if (expect_token(p, &pre_decrement, TOK_DECREMENT)) {
 		struct value val;
 		if (!parse_unary(p, compiler, &val)) {
-			fprintf(stderr, "%s:%d:%d: error: expected atomic expression for pre-decrement operator\n", and_.filename, and_.line, and_.column);
+			errorf(and_, "expected atomic expression for pre-decrement operator\n");
 			exit(1);
 		}
 
@@ -1094,7 +1153,7 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 			break;
 
 		default:
-			fprintf(stderr, "%s:%d:%d: error: pre-decrement operator expects lvalue\n", and_.filename, and_.line, and_.column);
+			errorf(and_, "pre-decrement operator expects lvalue\n");
 			exit(1);
 		}
 		return true;
@@ -1106,7 +1165,7 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 	if (expect_token(p, &deref, TOK_ASTERISK)) {
 		struct value val;
 		if (!parse_unary(p, compiler, &val)) {
-			fprintf(stderr, "%s:%d:%d: error: expected atomic expression for dereference\n", deref.filename, deref.line, deref.column);
+			errorf(deref, "expected atomic expression for dereference\n");
 			exit(1);
 		}
 
@@ -1127,7 +1186,7 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 	if (expect_token(p, &minus, TOK_MINUS)) {
 		struct value val = {};
 		if (!parse_unary(p, compiler, &val)) {
-			fprintf(stderr, "%s:%d:%d: error: expected atomic expression for unary minus\n", minus.filename, minus.line, minus.column);
+			errorf(minus, "expected atomic expression for unary minus\n");
 			exit(1);
 		}
 
@@ -1171,7 +1230,7 @@ bool parse_while(struct parser *p, struct compiler *compiler)
 
 	struct token open;
 	if (!expect_token(p, &open, TOK_PAREN_OPEN)) {
-		fprintf(stderr, "%s:%d:%d: error: expected open paren after while, got %s\n", open.filename, open.line, open.column, token_short_name(open));
+		errorf(open, "expected open paren after while, got %s\n", token_short_name(open));
 		exit(2);
 	}
 
@@ -1184,7 +1243,7 @@ bool parse_while(struct parser *p, struct compiler *compiler)
 
 	struct value cond;
 	if (!parse_expression(p, compiler, &cond)) {
-		fprintf(stderr, "%s:%d:%d: error: expected condition inside while loop\n", open.filename, open.line, open.column);
+		errorf(open, "expected condition inside while loop\n");
 		exit(2);
 	}
 
@@ -1194,13 +1253,13 @@ bool parse_while(struct parser *p, struct compiler *compiler)
 
 	struct token close;
 	if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
-		fprintf(stderr, "%s:%d:%d: error: expected close paren, got %s\n", close.filename, close.line, close.column, token_short_name(close));
-		fprintf(stderr, "%s:%d:%d: note: paren was open here\n", open.filename, open.line, open.column);
+		errorf(close, "expected close paren, got %s\n", token_short_name(close));
+		notef(open, "paren was open here\n");
 		exit(2);
 	}
 
 	if (!parse_statement(p, compiler)) {
-		fprintf(stderr, "%s:%d:%d: error: expected statement after while\n", close.filename, close.line, close.column);
+		errorf(close, "expected statement after while\n");
 		exit(2);
 	}
 	leave_scope(compiler);
@@ -1220,7 +1279,7 @@ bool parse_if(struct parser *p, struct compiler *compiler)
 
 	struct token open;
 	if (!expect_token(p, &open, TOK_PAREN_OPEN)) {
-		fprintf(stderr, "%s:%d:%d: error: expected open paren after if, got %s\n", open.filename, open.line, open.column, token_short_name(open));
+		errorf(open, "expected open paren after if, got %s\n", token_short_name(open));
 		exit(2);
 	}
 
@@ -1233,7 +1292,7 @@ bool parse_if(struct parser *p, struct compiler *compiler)
 
 	struct value cond;
 	if (!parse_expression(p, compiler, &cond)) {
-		fprintf(stderr, "%s:%d:%d: error: expected condition inside if statement\n", open.filename, open.line, open.column);
+		errorf(open, "expected condition inside if statement\n");
 		exit(2);
 	}
 
@@ -1244,13 +1303,13 @@ bool parse_if(struct parser *p, struct compiler *compiler)
 
 	struct token close;
 	if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
-		fprintf(stderr, "%s:%d:%d: error: expected close paren, got %s\n", close.filename, close.line, close.column, token_short_name(close));
-		fprintf(stderr, "%s:%d:%d: note: paren was open here\n", open.filename, open.line, open.column);
+		errorf(close, "expected close paren, got %s\n", token_short_name(close));
+		errorf(open, "paren was open here\n");
 		exit(2);
 	}
 
 	if (!parse_statement(p, compiler)) {
-		fprintf(stderr, "%s:%d:%d: error: expected statement after if\n", close.filename, close.line, close.column);
+		errorf(close, "expected statement after if\n");
 		exit(2);
 	}
 
@@ -1265,7 +1324,7 @@ bool parse_if(struct parser *p, struct compiler *compiler)
 	printf(".local_%zu:\n", else_label);
 
 	if (!parse_statement(p, compiler)) {
-		fprintf(stderr, "%s:%d:%d: error: expected statement after else\n", else_.filename, else_.line, else_.column);
+		errorf(else_, "expected statement after else\n");
 		exit(2);
 	}
 
@@ -1295,7 +1354,7 @@ bool parse_statement(struct parser *p, struct compiler *compiler)
 	if (parse_expression(p, compiler, &result)) {
 		struct token semicolon;
 		if (!expect_token(p, &semicolon, TOK_SEMICOLON)) {
-			fprintf(stderr, "%s:%d:%d: error: expected ; at the end of the statement, got %s\n", semicolon.filename, semicolon.line, semicolon.column, token_short_name(semicolon));
+			errorf(semicolon, "expected ; at the end of the statement, got %s\n", token_short_name(semicolon));
 			exit(2);
 		}
 		compiler->stack_current_offset = stack_offset;
@@ -1336,15 +1395,15 @@ bool parse_function_definition(struct parser *p, struct compiler *compiler, stru
 		} else if (arg.kind == TOK_IDENTIFIER && expect_token(p, &next, TOK_COMMA)) {
 			continue;
 		} else {
-			fprintf(stderr, "%s:%d:%d: error: function definition expectes either close paren or comma, got %s\n", next.filename, next.line, next.column, token_short_name(next));
-			fprintf(stderr, "%s:%d:%d: note: paren was open here\n", open.filename, open.line, open.column);
+			errorf(next, "function definition expectes either close paren or comma, got %s\n", token_short_name(next));
+			notef(open, "paren was open here\n");
 			exit(2);
 		}
 	}
 
 	if (!parse_statement(p, compiler)) {
 		struct token tok = peek_token(p);
-		fprintf(stderr, "%s:%d:%d: error: expected statement after function definition, got %s\n", tok.filename, tok.line, tok.column, token_short_name(tok));
+		errorf(tok, "expected statement after function definition, got %s\n", token_short_name(tok));
 		exit(1);
 	}
 
@@ -1377,14 +1436,14 @@ void parse_program(struct parser *p, struct compiler *compiler)
 
 	struct token next = peek_token(p);
 	if (next.kind != TOK_EOF) {
-		fprintf(stderr, "%s:%d:%d: error: stray '%s' at the end of the program\n", next.filename, next.line, next.column, token_short_name(next));
+		errorf(next, "stray '%s' at the end of the program\n", token_short_name(next));
 		exit(1);
 	}
 }
 
 void dump_token(FILE *out, struct token tok)
 {
-	fprintf(out, "%s:%d:%d: ", tok.filename, tok.line, tok.column);
+	dump_location(out, tok);
 	switch (tok.kind) {
 	case TOK_EOF:
 		fprintf(out, "EOF\n");
@@ -1406,68 +1465,17 @@ void dump_token(FILE *out, struct token tok)
 		fprintf(out, "String \"%s\"\n", tok.text);
 		break;
 
-	case TOK_EQUAL:
-		fprintf(out, "==\n");
-		break;
-
-	case TOK_NOT_EQUAL:
-		fprintf(out, "==\n");
-		break;
-
-	case TOK_LESS_OR_EQ:
-		fprintf(out, "<=\n");
-		break;
-
-	case TOK_GREATER_OR_EQ:
-		fprintf(out, ">=\n");
-		break;
-
-	case TOK_ASSIGN_ADD: fprintf(out, "+=\n"); break;
-	case TOK_ASSIGN_SUB: fprintf(out, "-=\n"); break;
-	case TOK_ASSIGN_MUL: fprintf(out, "*=\n"); break;
-	case TOK_ASSIGN_DIV: fprintf(out, "/=\n"); break;
-	case TOK_INCREMENT: fprintf(out, "++\n"); break;
-	case TOK_DECREMENT: fprintf(out, "--\n"); break;
-
-
-	case TOK_AUTO:
-	case TOK_CASE:
-	case TOK_ELSE:
-	case TOK_EXTRN:
-	case TOK_GOTO:
-	case TOK_IF:
-	case TOK_RETURN:
-	case TOK_SWITCH:
-	case TOK_WHILE:
-		fprintf(out, "%s\n", KEYWORDS[tok.kind]);
-		break;
-
-	case TOK_AND:
-	case TOK_ASSIGN:
-	case TOK_ASTERISK:
-	case TOK_COMMA:
-	case TOK_CURLY_CLOSE:
-	case TOK_CURLY_OPEN:
-	case TOK_DIV:
-	case TOK_GREATER:
-	case TOK_LESS:
-	case TOK_LOGICAL_NOT:
-	case TOK_MINUS:
-	case TOK_OR:
-	case TOK_PAREN_CLOSE:
-	case TOK_PAREN_OPEN:
-	case TOK_PERCENT:
-	case TOK_PLUS:
-	case TOK_SEMICOLON:
-	case TOK_XOR:
-	case TOK_QUESTION_MARK:
-	case TOK_COLON:
-		fprintf(out, "%c\n", tok.kind);
-		break;
+	default:
+		for (size_t i = 0; i < ARRAY_LEN(SYMBOLS); ++i) {
+			if (SYMBOLS[i].kind == tok.kind) {
+				fprintf(out, "%s\n", SYMBOLS[i].string);
+				return;
+			}
+		}
 	}
 }
 
-uint64_t escape_seq(char c, char const* filename, int line, int column)
+uint64_t escape_seq(struct token character, char c)
 {
 	switch (c) {
 	case '0':  return 0;
@@ -1479,7 +1487,7 @@ uint64_t escape_seq(char c, char const* filename, int line, int column)
 	case '\'': return '\'';
 
 	default:
-		fprintf(stderr, "%s:%d:%d: error: unknown escape sequence *%c\n", filename, line, column, c);
+		errorf(character, "unknown escape sequence *%c\n", c);
 		exit(1);
 	}
 }
@@ -1549,248 +1557,134 @@ bool scan_integer_literal(char const* source, uint64_t *result)
 	return (require_nonempty || seen_digit) && *p == '\0';
 }
 
+static inline int next(struct tokenizer *ctx)
+{
+	return ctx->source[ctx->head] == '\0' ? '\0' : ctx->source[ctx->head++];
+}
+
+static inline bool consume_if(struct tokenizer *ctx, int(*predicate)(int))
+{
+	if (predicate(ctx->source[ctx->head])) {
+		ctx->head++;
+		return true;
+	}
+	return false;
+}
+
+static inline bool consume(struct tokenizer *ctx, char const* expected)
+{
+	if (startswith(&ctx->source[ctx->head], expected)) {
+		ctx->head += strlen(expected);
+		return true;
+	}
+	return false;
+}
+
+int isalnumor_(int c)
+{
+	return c == '_' || isalnum(c);
+}
+
 struct token scan(struct tokenizer *ctx)
 {
-	int c;
-	struct string_builder buf = {};
-	struct token ret = {
-		.filename = ctx->filename,
-	};
+	struct token ret = {};
 
-again:
-	switch (c = fgetc(ctx->source)) {
-	case EOF:
+	{
+		bool done_something; do {
+			done_something = false;
+			while (consume_if(ctx, isspace)) done_something = true;
+			if (consume(ctx, "/*")) {
+				done_something = true;
+				while (!consume(ctx, "*/") && next(ctx));
+			}
+		} while (done_something);
+	}
+
+	if (!ctx->source[ctx->head]) {
 		return ret;
+	}
 
-#define ASCII(T) \
-	case T: ret.column = ctx->column++; ret.line = ctx->line; ret.kind = T; return ret
+	ret.p = &ctx->source[ctx->head];
 
-	ASCII(TOK_COMMA);
-	ASCII(TOK_CURLY_CLOSE);
-	ASCII(TOK_CURLY_OPEN);
-	ASCII(TOK_PAREN_CLOSE);
-	ASCII(TOK_PAREN_OPEN);
-	ASCII(TOK_PERCENT);
-	ASCII(TOK_SEMICOLON);
-	ASCII(TOK_AND);
-	ASCII(TOK_OR);
-	ASCII(TOK_XOR);
-	ASCII(TOK_QUESTION_MARK);
-	ASCII(TOK_COLON);
-#undef ASCII
-
-#define ONE_OR_TWO(c1, t1, c2, t2) \
-	case c1: \
-		if ((c = fgetc(ctx->source)) == c2) { \
-			ret.kind = t2; \
-			ret.column = ctx->column; \
-			ret.line = ctx->line; \
-			ctx->column += 2; \
-			return ret; \
-		} else { \
-			ungetc(c, ctx->source); \
-			ret.column = ctx->column++; \
-			ret.line = ctx->line; \
-			ret.kind = t1; \
-			return ret; \
-		}
-
-	ONE_OR_TWO('=', TOK_ASSIGN, '=', TOK_EQUAL);
-	ONE_OR_TWO('<', TOK_LESS, '=', TOK_LESS_OR_EQ);
-	ONE_OR_TWO('>', TOK_GREATER, '=', TOK_GREATER_OR_EQ);
-	ONE_OR_TWO('!', TOK_LOGICAL_NOT, '=', TOK_NOT_EQUAL);
-	ONE_OR_TWO('*', TOK_ASTERISK, '=', TOK_ASSIGN_MUL);
-#undef ONE_OR_TWO
-
-	case '+':
-		if ((c = fgetc(ctx->source)) == '+') {
-			ret.kind = TOK_INCREMENT;
-			ret.column = ctx->column;
-			ret.line = ctx->line;
-			ctx->column += 2;
-			return ret;
-		} else if (c == '=') {
-			ret.kind = TOK_ASSIGN_ADD;
-			ret.column = ctx->column;
-			ret.line = ctx->line;
-			ctx->column += 2;
-			return ret;
-		} else {
-			ungetc(c, ctx->source);
-			ret.kind = TOK_PLUS;
-			ret.column = ctx->column++;
-			ret.line = ctx->line;
+	for (size_t i = 0; i < ARRAY_LEN(SYMBOLS); ++i) {
+		if (consume(ctx, SYMBOLS[i].string)) {
+			ret.kind = SYMBOLS[i].kind;
 			return ret;
 		}
+	}
 
-	case '-':
-		if ((c = fgetc(ctx->source)) == '-') {
-			ret.kind = TOK_DECREMENT;
-			ret.column = ctx->column;
-			ret.line = ctx->line;
-			ctx->column += 2;
-			return ret;
-		} else if (c == '=') {
-			ret.kind = TOK_ASSIGN_SUB;
-			ret.column = ctx->column;
-			ret.line = ctx->line;
-			ctx->column += 2;
-			return ret;
-		} else {
-			ungetc(c, ctx->source);
-			ret.kind = TOK_MINUS;
-			ret.column = ctx->column++;
-			ret.line = ctx->line;
-			return ret;
-		}
-
-	case '/':
-		if ((c = fgetc(ctx->source)) == '*') {
-			ctx->column += 2;
-
-			char prev = '\0';
-			while ((c = fgetc(ctx->source)) != EOF && !(prev == '*' && c == '/')) {
-				switch (c) {
-				case '\n': ctx->line++; __attribute__ ((fallthrough));
-				case '\r': ctx->column = 1; break;
-				default: ctx->column++;
-				}
-				prev = c;
-			}
-			goto again;
-		} else if (c == '=') {
-			ret.kind = TOK_ASSIGN_DIV;
-			ret.column = ctx->column;
-			ret.line = ctx->line;
-			ctx->column += 2;
-			return ret;
-		} else {
-			ungetc(c, ctx->source);
-			ret.column = ctx->column++;
-			ret.line = ctx->line;
-			ret.kind = TOK_DIV;
-			return ret;
-		}
-
-	case '\n':
-		ctx->line++; __attribute__ ((fallthrough));
-	case '\r':
-		ctx->column = 1;
-		goto again;
-
-	case '"':
-		ret.column = ctx->column++;
-		ret.line = ctx->line;
+	if (consume(ctx, "\"")) {
 		ret.kind = TOK_STRING;
+		struct string_builder sb = {};
+		for (char c;;) {
+			switch (c = next(ctx)) {
+			case '\0':
+				errorf(ret, "expected end of string literal, got end of file\n");
+				exit(1);
 
-		{
-			struct string_builder sb = {};
+			case '\"':
+				da_append(&sb, '\0');
+				ret.text = inter(sb.items);
+				return ret;
 
-			for (;;) {
-				switch (c = fgetc(ctx->source)) {
-				case EOF:
-					fprintf(stderr, "%s:%d:%d: error: expected end of string literal, got end of file\n", ctx->filename, ctx->line, ctx->column);
-					exit(1);
+			case '*':
+				c = next(ctx);
+				da_append(&sb, escape_seq(ret, c));
+				break;
 
-				case '\"':
-					ctx->column++;
-					da_append(&sb, '\0');
-					ret.text = inter(sb.items);
-					return ret;
-
-				case '*':
-					ctx->column++;
-					c = fgetc(ctx->source);
-					da_append(&sb, escape_seq(c, ctx->filename, ctx->line, ctx->column));
-					break;
-
-				case '\n':
-					ctx->line++; __attribute__ ((fallthrough));
-				case '\r':
-					ctx->column = 1;
-					da_append(&sb, c);
-					break;
-
-				default:
-					ctx->column++;
-					da_append(&sb, c);
-				}
+			default:
+				da_append(&sb, c);
 			}
 		}
-		break;
+		return ret;
+	}
 
-	case '\'':
-		ret.column = ctx->column++;
-		ret.line = ctx->line;
+	if (consume(ctx, "'")) {
 		ret.kind = TOK_CHARACTER;
+		int c;
 
-		switch (c = fgetc(ctx->source)) {
+		switch (c = next(ctx)) {
 		case '\'':
-			fprintf(stderr, "%s:%d:%d: error: empty character constant\n", ret.filename, ret.line, ret.column);
+			errorf(ret, "empty character constant\n");
 			exit(1);
 
 		case '*':
-			ctx->column++;
-			ret.text = strdup((char[]) { '*', escape_seq(fgetc(ctx->source), ctx->filename, ctx->line, ctx->column), '\0' });
+			ret.text = strdup((char[]) { '*', escape_seq(ret, next(ctx)), '\0' });
 			ret.ival = ret.text[1];
-			ctx->column++;
 			break;
 
 
 		default:
-			ctx->column++;
 			ret.text = strdup((char[]) { c, '\0' });
 			ret.ival = c;
 			break;
 		}
 
-		if (fgetc(ctx->source) != '\'') {
-			fprintf(stderr, "%s:%d:%d: error: multicharacter character constants are not implemented yet\n", ret.filename, ret.line, ret.column);
+		if (!consume(ctx, "'")) {
+			errorf(ret, "multicharacter character constants are not implemented yet\n");
 			exit(1);
 		}
-		ctx->column++;
-
 		return ret;
-
-
-	default:
-		if (isspace(c)) {
-			ctx->column++;
-			goto again;
-		}
-
-		assert(buf.count == 0);
-		ret.column = ctx->column;
-		ret.line = ctx->line;
-
-		// TODO: Support UTF-8
-		for (; isalnum(c) || c == '_'; c = fgetc(ctx->source)) {
-			da_append(&buf, c);
-			++ctx->column;
-		}
-		da_append(&buf, '\0');
-		ungetc(c, ctx->source);
-
-		ret.text = buf.items;
-
-		if (scan_integer_literal(ret.text, &ret.ival)) {
-			ret.kind = TOK_INTEGER;
-			return ret;
-		}
-
-		if (buf.items[0] != '\0') {
-			ret.kind = TOK_IDENTIFIER;
-
-			for (size_t i = 0; i < ARRAY_LEN(KEYWORDS); ++i) {
-				if (KEYWORDS[i] && strcmp(KEYWORDS[i], ret.text) == 0) {
-					ret.kind = i;
-					break;
-				}
-			}
-			return ret;
-		}
 	}
 
-	fprintf(stderr, "%s:%d:%d: error: unknown character '%c'\n", ctx->filename, ctx->line, ctx->column, c);
+	// TODO: Support UTF-8
+	// TODO: Use consume_if
+	char const* s = &ctx->source[ctx->head];
+	size_t i = 0;
+	while (consume_if(ctx, isalnumor_)) ++i;
+
+	ret.text = strndup(s, i);
+
+	if (scan_integer_literal(ret.text, &ret.ival)) {
+		ret.kind = TOK_INTEGER;
+		return ret;
+	}
+
+	if (i != 0) {
+		ret.kind = TOK_IDENTIFIER;
+		return ret;
+	}
+
+	errorf(ret, "unknown character '%c' (%d)\n", ctx->source[ctx->head], ctx->source[ctx->head]);
 	exit(1);
 }
