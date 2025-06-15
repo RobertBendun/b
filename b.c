@@ -127,13 +127,18 @@ struct token
 		TOK_GREATER_OR_EQ,
 		TOK_NOT_EQUAL,
 
+		TOK_SHIFT_LEFT,
+		TOK_SHIFT_RIGHT,
+
+		TOK_INCREMENT,
+		TOK_DECREMENT,
+
 		TOK_ASSIGN_ADD,
 		TOK_ASSIGN_SUB,
 		TOK_ASSIGN_MUL,
 		TOK_ASSIGN_DIV,
-
-		TOK_INCREMENT,
-		TOK_DECREMENT,
+		TOK_ASSIGN_SHIFT_LEFT,
+		TOK_ASSIGN_SHIFT_RIGHT,
 	} kind;
 
 	char const* text;
@@ -151,6 +156,9 @@ struct {
 	enum token_kind kind;
 	char const* string;
 } SYMBOLS[] = {
+	{ TOK_ASSIGN_SHIFT_LEFT, "<<=" },
+	{ TOK_ASSIGN_SHIFT_RIGHT, ">>=" },
+
 	{ TOK_EQUAL, "==" },
 	{ TOK_LESS_OR_EQ, "<=" },
 	{ TOK_GREATER_OR_EQ, ">=" },
@@ -161,6 +169,9 @@ struct {
 	{ TOK_ASSIGN_DIV, "/=" },
 	{ TOK_INCREMENT, "++" },
 	{ TOK_DECREMENT, "--" },
+	{ TOK_SHIFT_LEFT, "<<" },
+	{ TOK_SHIFT_RIGHT, ">>" },
+
 
 	{ TOK_AND, "&" },
 	{ TOK_ASSIGN, "=" },
@@ -787,10 +798,20 @@ struct binop {
 
 // TODO: Note that we generaly have the same associativity for the same precedense level
 struct binop* binary_operators[] = {
-	(struct binop[]) { {TOK_ASSIGN, ASSOC_RIGHT}, {TOK_ASSIGN_ADD, ASSOC_RIGHT}, {TOK_ASSIGN_SUB, ASSOC_RIGHT}, {TOK_ASSIGN_MUL, ASSOC_RIGHT}, {TOK_ASSIGN_DIV, ASSOC_RIGHT}, {}  },
+	(struct binop[]) {
+		{TOK_ASSIGN, ASSOC_RIGHT},
+		{TOK_ASSIGN_ADD, ASSOC_RIGHT},
+		{TOK_ASSIGN_SUB, ASSOC_RIGHT},
+		{TOK_ASSIGN_MUL, ASSOC_RIGHT},
+		{TOK_ASSIGN_DIV, ASSOC_RIGHT},
+		{TOK_ASSIGN_SHIFT_LEFT, ASSOC_RIGHT},
+		{TOK_ASSIGN_SHIFT_RIGHT, ASSOC_RIGHT},
+		{},
+	},
 	(struct binop[]) { {TOK_QUESTION_MARK, ASSOC_RIGHT}, {} },
 	(struct binop[]) { {TOK_EQUAL}, {TOK_NOT_EQUAL}, {} },
 	(struct binop[]) { {TOK_GREATER}, {TOK_GREATER_OR_EQ}, {TOK_LESS}, {TOK_LESS_OR_EQ}, {} },
+	(struct binop[]) { {TOK_SHIFT_LEFT}, {TOK_SHIFT_RIGHT}, {} },
 	(struct binop[]) { {TOK_PLUS}, {TOK_MINUS}, {} },
 	(struct binop[]) { {TOK_ASTERISK}, {TOK_DIV}, {TOK_PERCENT}, {} },
 	(struct binop[]) { {TOK_AND}, {} },
@@ -858,6 +879,8 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 	case TOK_ASSIGN_DIV:
 	case TOK_ASSIGN_MUL:
 	case TOK_ASSIGN_SUB:
+	case TOK_ASSIGN_SHIFT_LEFT:
+	case TOK_ASSIGN_SHIFT_RIGHT:
 		mov_into_reg("rax", lhsv);
 		mov_into_reg("rcx", rhsv);
 
@@ -865,6 +888,8 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 		case TOK_ASSIGN_MUL: printf("\timul rax, rcx\n"); break;
 		case TOK_ASSIGN_ADD: printf("\tadd rax, rcx\n"); break;
 		case TOK_ASSIGN_SUB: printf("\tsub rax, rcx\n"); break;
+		case TOK_ASSIGN_SHIFT_LEFT: printf("\tshl rax, cl\n"); break;
+		case TOK_ASSIGN_SHIFT_RIGHT: printf("\tshr rax, cl\n"); break;
 		case TOK_ASSIGN_DIV:
 			printf("\tcqo\n");
 			printf("\tidiv QWORD rcx\n");
@@ -909,6 +934,26 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 			printf("\tmov [rbp-%zu], rax\n", res);
 			return;
 		}
+
+
+	// TODO: We can optimize this (remove one move, add accepts memory as argument)
+	// TODO: Proof that this is correct
+	case TOK_SHIFT_LEFT:
+		mov_into_reg("rax", lhsv);
+		mov_into_reg("rcx", rhsv);
+		printf("\tshl rax, cl\n");
+		printf("\tmov [rbp-%zu], rax\n", res);
+		return;
+
+	// TODO: We can optimize this (remove one move, add accepts memory as argument)
+	// TODO: Proof that this is correct
+	case TOK_SHIFT_RIGHT:
+		mov_into_reg("rax", lhsv);
+		mov_into_reg("rcx", rhsv);
+		printf("\tshr rax, cl\n");
+		printf("\tmov [rbp-%zu], rax\n", res);
+		return;
+
 
 	case TOK_EQUAL:
 	case TOK_GREATER:

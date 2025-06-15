@@ -98,8 +98,8 @@ main() {
         - [x] Multiplicative operators: `* / %`
         - [x] Relational operatos: `< > <= >= == !=`
         - [x] Compound assigment `op=`
+        - [x] Shift operators: `<< >>`
         - [ ] Logical (short circuting): `&& ||`
-        - [ ] Shift operators: `<< >>`
         - [ ] Index
     - [ ] Unary operators
         - [x] Address of: `&`
