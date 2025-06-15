@@ -1492,11 +1492,6 @@ uint64_t escape_seq(struct token character, char c)
 	}
 }
 
-int ishexdigit(int c)
-{
-	return isdigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-}
-
 bool startswith(char const *str, char const *prefix)
 {
 	return strncmp(str, prefix, strlen(prefix)) == 0;
