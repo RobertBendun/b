@@ -105,10 +105,14 @@ main() {
         - [x] Address of: `&`
         - [x] Indirection: `*`
         - [x] Negation: `-`
+        - [x] Pre-increment/decrement
         - [ ] Bitwise complement: `~`
         - [ ] Logical Not: `!`
-        - [ ] Pre-increment/decrement
         - [ ] Post-increment/decrement
+
+## Additional features inside `b.c`
+
+- Integer literals can have `_` inside them, making constants like `0xdeadc0de` more readable: `0xdead_c0de`
 
 ## Resources
 

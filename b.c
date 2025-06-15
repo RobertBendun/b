@@ -130,6 +130,9 @@ struct token
 		TOK_ASSIGN_SUB,
 		TOK_ASSIGN_MUL,
 		TOK_ASSIGN_DIV,
+
+		TOK_INCREMENT,
+		TOK_DECREMENT,
 	} kind;
 
 	char const* text;
@@ -184,7 +187,8 @@ char const* token_kind_short_name(enum token_kind kind)
 	case TOK_ASSIGN_SUB: return "-=";
 	case TOK_ASSIGN_MUL: return "*=";
 	case TOK_ASSIGN_DIV: return "/=";
-
+	case TOK_INCREMENT: return "++";
+	case TOK_DECREMENT: return "--";
 	}
 
 	assert(0 && "unreachable");
@@ -1042,6 +1046,62 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 		return true;
 	}
 
+	struct token pre_increment;
+	if (expect_token(p, &pre_increment, TOK_INCREMENT)) {
+		struct value val;
+		if (!parse_unary(p, compiler, &val)) {
+			fprintf(stderr, "%s:%d:%d: error: expected atomic expression for pre-increment operator\n", and_.filename, and_.line, and_.column);
+			exit(1);
+		}
+
+		switch (val.kind) {
+		case LVALUE_AUTO:
+			*result = val;
+			printf("\tinc QWORD [rbp-%zu]\n", val.offset);
+			break;
+
+		case LVALUE_PTR:
+			*result = val;
+			printf("\tmov rax, [rbp-%zu]\n", val.offset);
+			printf("\tinc QWORD [rax]\n");
+			break;
+
+		default:
+			fprintf(stderr, "%s:%d:%d: error: pre-increment operator expects lvalue\n", and_.filename, and_.line, and_.column);
+			exit(1);
+		}
+		return true;
+	}
+
+	struct token pre_decrement;
+	if (expect_token(p, &pre_decrement, TOK_DECREMENT)) {
+		struct value val;
+		if (!parse_unary(p, compiler, &val)) {
+			fprintf(stderr, "%s:%d:%d: error: expected atomic expression for pre-decrement operator\n", and_.filename, and_.line, and_.column);
+			exit(1);
+		}
+
+		switch (val.kind) {
+		case LVALUE_AUTO:
+			*result = val;
+			printf("\tdec QWORD [rbp-%zu]\n", val.offset);
+			break;
+
+		case LVALUE_PTR:
+			*result = val;
+			printf("\tmov rax, [rbp-%zu]\n", val.offset);
+			printf("\tdec QWORD [rax]\n");
+			break;
+
+		default:
+			fprintf(stderr, "%s:%d:%d: error: pre-decrement operator expects lvalue\n", and_.filename, and_.line, and_.column);
+			exit(1);
+		}
+		return true;
+	}
+
+
+
 	struct token deref;
 	if (expect_token(p, &deref, TOK_ASTERISK)) {
 		struct value val;
@@ -1366,6 +1426,9 @@ void dump_token(FILE *out, struct token tok)
 	case TOK_ASSIGN_SUB: fprintf(out, "-=\n"); break;
 	case TOK_ASSIGN_MUL: fprintf(out, "*=\n"); break;
 	case TOK_ASSIGN_DIV: fprintf(out, "/=\n"); break;
+	case TOK_INCREMENT: fprintf(out, "++\n"); break;
+	case TOK_DECREMENT: fprintf(out, "--\n"); break;
+
 
 	case TOK_AUTO:
 	case TOK_CASE:
@@ -1536,10 +1599,50 @@ again:
 	ONE_OR_TWO('<', TOK_LESS, '=', TOK_LESS_OR_EQ);
 	ONE_OR_TWO('>', TOK_GREATER, '=', TOK_GREATER_OR_EQ);
 	ONE_OR_TWO('!', TOK_LOGICAL_NOT, '=', TOK_NOT_EQUAL);
-	ONE_OR_TWO('+', TOK_PLUS, '=', TOK_ASSIGN_ADD);
-	ONE_OR_TWO('-', TOK_MINUS, '=', TOK_ASSIGN_SUB);
 	ONE_OR_TWO('*', TOK_ASTERISK, '=', TOK_ASSIGN_MUL);
 #undef ONE_OR_TWO
+
+	case '+':
+		if ((c = fgetc(ctx->source)) == '+') {
+			ret.kind = TOK_INCREMENT;
+			ret.column = ctx->column;
+			ret.line = ctx->line;
+			ctx->column += 2;
+			return ret;
+		} else if (c == '=') {
+			ret.kind = TOK_ASSIGN_ADD;
+			ret.column = ctx->column;
+			ret.line = ctx->line;
+			ctx->column += 2;
+			return ret;
+		} else {
+			ungetc(c, ctx->source);
+			ret.kind = TOK_PLUS;
+			ret.column = ctx->column++;
+			ret.line = ctx->line;
+			return ret;
+		}
+
+	case '-':
+		if ((c = fgetc(ctx->source)) == '-') {
+			ret.kind = TOK_DECREMENT;
+			ret.column = ctx->column;
+			ret.line = ctx->line;
+			ctx->column += 2;
+			return ret;
+		} else if (c == '=') {
+			ret.kind = TOK_ASSIGN_SUB;
+			ret.column = ctx->column;
+			ret.line = ctx->line;
+			ctx->column += 2;
+			return ret;
+		} else {
+			ungetc(c, ctx->source);
+			ret.kind = TOK_MINUS;
+			ret.column = ctx->column++;
+			ret.line = ctx->line;
+			return ret;
+		}
 
 	case '/':
 		if ((c = fgetc(ctx->source)) == '*') {
