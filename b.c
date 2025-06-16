@@ -44,7 +44,7 @@ struct string_pool
 
 static struct string_pool *string_intering_pool = NULL;
 
-char const* inter(char const *str)
+static char const* inter(char const *str)
 {
 	size_t len = strlen(str);
 
@@ -101,6 +101,7 @@ struct token
 		TOK_XOR = '^',
 		TOK_QUESTION_MARK = '?',
 		TOK_COLON = ':',
+		TOK_BITWISE_NOT = '~',
 
 		// Make sure that non ascii tokens start after ascii letters
 		TOK_IDENTIFIER = 127,
@@ -192,6 +193,7 @@ struct {
 	{ TOK_XOR, "^" },
 	{ TOK_QUESTION_MARK, "?" },
 	{ TOK_COLON, ":" },
+	{ TOK_BITWISE_NOT, "~" },
 
 	{ TOK_AUTO, "auto" },
 	{ TOK_CASE, "case" },
@@ -1145,6 +1147,20 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 
 		*result = (struct value) { .kind = RVALUE, .offset = alloc_stack(compiler) };
 		printf("\tlea rax, [rbp-%zu]\n", val.offset);
+		printf("\tmov [rbp-%zu], rax\n", result->offset);
+		return true;
+	}
+
+	struct token bnot;
+	if (expect_token(p, &bnot, TOK_BITWISE_NOT)) {
+		struct value val;
+		if (!parse_unary(p, compiler, &val)) {
+			errorf(bnot, "expected primary expression for bitwise not operator\n");
+			exit(1);
+		}
+		*result = (struct value) { .kind = RVALUE, .offset = alloc_stack(compiler) };
+		mov_into_reg("rax", val);
+		printf("\tnot rax\n");
 		printf("\tmov [rbp-%zu], rax\n", result->offset);
 		return true;
 	}

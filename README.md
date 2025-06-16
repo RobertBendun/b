@@ -107,7 +107,7 @@ main() {
         - [x] Negation: `-`
         - [x] Pre-increment/decrement
         - [x] Logical Not: `!`
-        - [ ] Bitwise complement: `~`
+        - [x] Bitwise complement: `~`
         - [ ] Post-increment/decrement
 
 ## Additional features inside `b.c`

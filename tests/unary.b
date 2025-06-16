@@ -16,4 +16,7 @@ main() {
 
 	a = 0; a = !a; printf(" 1 = %d*n", a);
 	a = 1; a = !a; printf(" 0 = %d*n", a);
+
+	a = 0xff; a = ~a; printf(" ffffffffffffff00 = %llx*n", a);
+	a = 0xffffffffffffff00; a = ~a; printf(" ff = %llx*n", a);
 }
