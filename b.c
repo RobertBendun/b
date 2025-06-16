@@ -308,8 +308,6 @@ struct scope
 {
 	struct symbol *items;
 	size_t capacity, count;
-
-	size_t stack_capacity;
 	size_t stack_offset;
 };
 
@@ -333,13 +331,11 @@ size_t alloc_stack(struct compiler *compiler)
 {
 	if (compiler->stack_capacity == 0) {
 		compiler->stack_capacity = 16;
-		printf("\tsub rsp, %zu\n", compiler->stack_capacity);
 	}
 
 	size_t offset = compiler->stack_current_offset;
 	compiler->stack_current_offset += sizeof(uint64_t);
 	if (compiler->stack_current_offset > compiler->stack_capacity) {
-		printf("\tadd rsp, -%zu\n", compiler->stack_capacity);
 		compiler->stack_capacity *= 2;
 	}
 	return offset;
@@ -350,18 +346,12 @@ void enter_scope(struct compiler *compiler)
 	++compiler->nesting;
 	assert(compiler->nesting < MAX_SCOPE_NESTING);
 	compiler->scope[compiler->nesting].count = 0;
-	compiler->scope[compiler->nesting].stack_capacity = compiler->stack_capacity;
 	compiler->scope[compiler->nesting].stack_offset = compiler->stack_current_offset;
 }
 
 void leave_scope(struct compiler *compiler)
 {
 	assert(compiler->nesting > 0 && "Trying to leave when in global scope");
-	size_t prev_capacity = compiler->scope[compiler->nesting].stack_capacity;
-	if (compiler->stack_capacity > prev_capacity) {
-		printf("\tadd rsp, %zu\n", compiler->stack_capacity - prev_capacity);
-		compiler->stack_capacity = prev_capacity;
-	}
 	compiler->stack_current_offset = compiler->scope[compiler->nesting].stack_offset;
 	--compiler->nesting;
 }
@@ -1533,12 +1523,14 @@ bool parse_function_definition(struct parser *p, struct compiler *compiler, stru
 	}
 
 	assert(compiler->nesting == 0);
+
 	struct symbol fun = define_symbol(compiler, ((struct symbol) { .kind = GLOBAL, .name = name.text }), name);
 
 	printf("public sym_%zu as '%s'\n", fun.id, name.text);
 	printf("sym_%zu:\n", fun.id);
 	printf("\tpush rbp\n");
 	printf("\tmov rbp, rsp\n");
+	printf("\tsub rsp, sym_%zu_stack_size\n", fun.id);
 	enter_scope(compiler);
 
 	size_t arguments_count = 0;
@@ -1575,7 +1567,11 @@ bool parse_function_definition(struct parser *p, struct compiler *compiler, stru
 	printf("\tleave\n");
 	printf("\tret\n");
 
+
+	printf("sym_%zu_stack_size = %zu\n", fun.id, compiler->stack_capacity);
 	leave_scope(compiler);
+	compiler->stack_capacity = 0;
+	compiler->stack_current_offset = 0;
 
 	return true;
 }
