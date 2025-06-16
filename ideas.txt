@@ -1,4 +1,28 @@
 -----------------------------------------------------------
+defer
+-----------------------------------------------------------
+
+As all C related languages this one would like to have defer construct.
+Note that:
+
+while (1) {
+	defer puts("hello");
+	continue;
+}
+
+would execute defer on end of each iteration
+
+{
+	{
+		defer puts("my");
+		puts("hello");
+	}
+	puts("world");
+}
+
+would print "hello\n" "my\n" "world\n"
+
+-----------------------------------------------------------
 Using simple definitions as an alternative to inline asm
 -----------------------------------------------------------
 
