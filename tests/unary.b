@@ -11,6 +11,9 @@ main() {
 	a = 0; printf(" 1 = %d*n", ++a);
 	a = 2; printf(" 1 = %d*n", --a);
 
+	a = 0; printf(" 0 = %d*n", a++); printf(" 1 = %d*n", a);
+	a = 2; printf(" 2 = %d*n", a--); printf(" 1 = %d*n", a);
+
 	p = &a; a = 0; ++*p; printf(" 1 = %d*n", a);
 	p = &a; a = 2; --*p; printf(" 1 = %d*n", a);
 

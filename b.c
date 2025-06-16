@@ -1159,6 +1159,50 @@ bool parse_primary_expression(struct parser *p, struct compiler *compiler, struc
 		}
 	}
 
+	struct token post_inc;
+	if (expect_token(p, &post_inc, TOK_INCREMENT)) {
+		*result = (struct value) { .kind = RVALUE, .offset = alloc_stack(compiler) };
+		mov_into_reg("rax", lhs);
+		printf("\tmov [rbp-%zu], rax\n", result->offset);
+
+		switch (lhs.kind) {
+		case LVALUE_AUTO:
+			printf("\tinc QWORD [rbp-%zu]\n", lhs.offset);
+			break;
+
+		case LVALUE_PTR:
+			printf("\tmov rax, [rbp-%zu]\n", lhs.offset);
+			printf("\tinc QWORD [rax]\n");
+			break;
+
+		default:
+			errorf(post_inc, "post-increment operator expects lvalue\n");
+			exit(1);
+		}
+	}
+
+	struct token post_dec;
+	if (expect_token(p, &post_dec, TOK_DECREMENT)) {
+		*result = (struct value) { .kind = RVALUE, .offset = alloc_stack(compiler) };
+		mov_into_reg("rax", lhs);
+		printf("\tmov [rbp-%zu], rax\n", result->offset);
+
+		switch (lhs.kind) {
+		case LVALUE_AUTO:
+			printf("\tdec QWORD [rbp-%zu]\n", lhs.offset);
+			break;
+
+		case LVALUE_PTR:
+			printf("\tmov rax, [rbp-%zu]\n", lhs.offset);
+			printf("\tdec QWORD [rax]\n");
+			break;
+
+		default:
+			errorf(post_dec, "post-decrement operator expects lvalue\n");
+			exit(1);
+		}
+	}
+
 	return true;
 }
 
@@ -1226,7 +1270,7 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 	if (expect_token(p, &pre_increment, TOK_INCREMENT)) {
 		struct value val;
 		if (!parse_unary(p, compiler, &val)) {
-			errorf(and_, "expected atomic expression for pre-increment operator\n");
+			errorf(pre_increment, "expected atomic expression for pre-increment operator\n");
 			exit(1);
 		}
 
@@ -1243,7 +1287,7 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 			break;
 
 		default:
-			errorf(and_, "pre-increment operator expects lvalue\n");
+			errorf(pre_increment, "pre-increment operator expects lvalue\n");
 			exit(1);
 		}
 		return true;
@@ -1253,7 +1297,7 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 	if (expect_token(p, &pre_decrement, TOK_DECREMENT)) {
 		struct value val;
 		if (!parse_unary(p, compiler, &val)) {
-			errorf(and_, "expected atomic expression for pre-decrement operator\n");
+			errorf(pre_decrement, "expected atomic expression for pre-decrement operator\n");
 			exit(1);
 		}
 
@@ -1270,7 +1314,7 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 			break;
 
 		default:
-			errorf(and_, "pre-decrement operator expects lvalue\n");
+			errorf(pre_decrement, "pre-decrement operator expects lvalue\n");
 			exit(1);
 		}
 		return true;
