@@ -34,12 +34,9 @@ main() {
 	InitWindow(800, 600, "Raylib from B");
 	SetTargetFPS(60);
 
-
 	while (!WindowShouldClose()) {
-		if (x+100 >= 800) dx *= -1;
-		if (x     <=   0) dx *= -1;
-		if (y+60  >= 600) dy *= -1;
-		if (y     <=   0) dy *= -1;
+		if (x <= 0 || x+100 >= 800) dx *= -1;
+		if (y <= 0 || y+60  >= 600) dy *= -1;
 
 		x += dx * 2;
 		y += dy * 2;
@@ -88,10 +85,10 @@ main() {
     - [ ] `switch`
     - [ ] `case`
     - [ ] statement labels
-- [ ] Expressions
+- [x] Expressions
     - [x] Function call
     - [x] Constant
-    - [ ] Binary operators
+    - [x] Binary operators
         - [x] Additive operators: `+ -`
         - [x] Assigment `=`
         - [x] Bitwise operators: `& ^ |`
@@ -100,7 +97,7 @@ main() {
         - [x] Compound assigment `op=`
         - [x] Shift operators: `<< >>`
         - [x] Index
-        - [ ] Logical (short circuting): `&& ||`
+        - [x] Logical (short circuting): `&& ||`
     - [x] Unary operators
         - [x] Address of: `&`
         - [x] Bitwise complement: `~`

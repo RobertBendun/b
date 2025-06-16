@@ -142,6 +142,9 @@ struct token
 		TOK_ASSIGN_DIV,
 		TOK_ASSIGN_SHIFT_LEFT,
 		TOK_ASSIGN_SHIFT_RIGHT,
+
+		TOK_LOGICAL_OR,
+		TOK_LOGICAL_AND,
 	} kind;
 
 	char const* text;
@@ -170,6 +173,8 @@ struct {
 	{ TOK_DECREMENT, "--" },
 	{ TOK_SHIFT_LEFT, "<<" },
 	{ TOK_SHIFT_RIGHT, ">>" },
+	{ TOK_LOGICAL_OR, "||" },
+	{ TOK_LOGICAL_AND, "&&" },
 
 
 	{ TOK_AND, "&" },
@@ -799,14 +804,16 @@ struct binop* binary_operators[] = {
 		{},
 	},
 	(struct binop[]) { {TOK_QUESTION_MARK, ASSOC_RIGHT}, {} },
+	(struct binop[]) { {TOK_LOGICAL_OR}, {} },
+	(struct binop[]) { {TOK_LOGICAL_AND}, {} },
+	(struct binop[]) { {TOK_OR}, {} },
+	(struct binop[]) { {TOK_XOR}, {} },
+	(struct binop[]) { {TOK_AND}, {} },
 	(struct binop[]) { {TOK_EQUAL}, {TOK_NOT_EQUAL}, {} },
 	(struct binop[]) { {TOK_GREATER}, {TOK_GREATER_OR_EQ}, {TOK_LESS}, {TOK_LESS_OR_EQ}, {} },
 	(struct binop[]) { {TOK_SHIFT_LEFT}, {TOK_SHIFT_RIGHT}, {} },
 	(struct binop[]) { {TOK_PLUS}, {TOK_MINUS}, {} },
 	(struct binop[]) { {TOK_ASTERISK}, {TOK_DIV}, {TOK_PERCENT}, {} },
-	(struct binop[]) { {TOK_AND}, {} },
-	(struct binop[]) { {TOK_XOR}, {} },
-	(struct binop[]) { {TOK_OR}, {} },
 };
 
 #pragma GCC diagnostic pop
@@ -841,8 +848,15 @@ bool is_operator(enum token_kind kind)
 	return precedense(kind) != 0;
 }
 
-void emit_op(struct compiler *compiler, struct value *result, struct value lhsv, enum token_kind op, struct value rhsv)
+void emit_op(struct compiler *compiler, struct value *result, struct value lhsv, enum token_kind op, struct value rhsv, size_t end_label)
 {
+	if (op == TOK_LOGICAL_OR || op == TOK_LOGICAL_AND) {
+		mov_into_reg("rax", rhsv);
+		printf("\tmov [rbp-%zu], rax\n", result->offset);
+		printf(".local_%zu:\n", end_label);
+		return;
+	}
+
 	// TODO: Static checking for this switch
 	// TODO: Not needed for assign
 	size_t res = alloc_stack(compiler);
@@ -1019,6 +1033,22 @@ void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, str
 			errorf(colon, "expected : after expression started with ?, got %s instead\n", token_short_name(colon));
 			exit(1);
 		}
+	} else if (op.kind == TOK_LOGICAL_AND) {
+		*result = (struct value) { .kind = RVALUE, .offset = alloc_stack(compiler) };
+		end_label = compiler->last_local_id++;
+		condition = lhs;
+		mov_into_reg("rax", condition);
+		printf("\tmov [rbp-%zu], rax\n", result->offset);
+		printf("\tcmp rax, 0\n");
+		printf("\tje .local_%zu\n", end_label);
+	} else if (op.kind == TOK_LOGICAL_OR) {
+		*result = (struct value) { .kind = RVALUE, .offset = alloc_stack(compiler) };
+		end_label = compiler->last_local_id++;
+		condition = lhs;
+		mov_into_reg("rax", condition);
+		printf("\tmov [rbp-%zu], rax\n", result->offset);
+		printf("\tcmp rax, 0\n");
+		printf("\tjne .local_%zu\n", end_label);
 	}
 
 	// TODO: See if we can get away without allocating this varibale
@@ -1039,7 +1069,8 @@ void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, str
 			printf(".local_%zu:\n", end_label);
 			return;
 		}
-		emit_op(compiler, result, lhs, op.kind, rhs);
+
+		emit_op(compiler, result, lhs, op.kind, rhs, end_label);
 		return;
 	}
 
@@ -1054,12 +1085,17 @@ void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, str
 		assert(associativity(op.kind) == associativity(next.kind));
 	}
 
+	// For logical operators:
+	// bind_left:  (a op b) op c
+	// bind_right: a op (b op c)
+
 	if (bind_left) {
-		emit_op(compiler, result, lhs, op.kind, rhs);
+		emit_op(compiler, result, lhs, op.kind, rhs, end_label);
 		parse_rhs(p, compiler, next, result, *result);
 	} else {
-		parse_rhs(p, compiler, next, result, rhs);
-		emit_op(compiler, result, lhs, op.kind, *result);
+		struct value rhs_result;
+		parse_rhs(p, compiler, next, &rhs_result, rhs);
+		emit_op(compiler, result, lhs, op.kind, rhs_result, end_label);
 	}
 }
 
@@ -1486,6 +1522,24 @@ bool parse_if(struct parser *p, struct compiler *compiler)
 
 bool parse_statement(struct parser *p, struct compiler *compiler)
 {
+	// TODO: Add compiler flag that would output this information
+#if 0
+	{
+		printf("\t;");
+		if (p->backlog.kind != TOK_EOF) {
+			dump_location(stdout, p->backlog);
+			char const* d = strchr(p->backlog.p, '\n');
+			fwrite(p->backlog.p, 1, d == NULL ? strlen(p->backlog.p) : d - p->backlog.p, stdout);
+		} else {
+			char const *s = p->tokenizer.source + p->tokenizer.head;
+			dump_location(stdout, (struct token) { .p = s });
+			char const* e = strchr(s, '\n');
+			fwrite(s, 1, e == NULL ? strlen(s) : e - s, stdout);
+		}
+		printf("\n");
+	}
+#endif
+
 	if (parse_empty_statement(p)
 	|| parse_auto(p, compiler)
 	|| parse_extern(p, compiler)

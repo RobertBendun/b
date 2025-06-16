@@ -12,10 +12,8 @@ main() {
 
 
 	while (!WindowShouldClose()) {
-		if (x+100 >= 800) dx *= -1;
-		if (x     <=   0) dx *= -1;
-		if (y+60  >= 600) dy *= -1;
-		if (y     <=   0) dy *= -1;
+		if (x <= 0 || x+100 >= 800) dx *= -1;
+		if (y <= 0 || y+60  >= 600) dy *= -1;
 
 		x += dx * 2;
 		y += dy * 2;
