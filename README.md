@@ -99,8 +99,8 @@ main() {
         - [x] Relational operatos: `< > <= >= == !=`
         - [x] Compound assigment `op=`
         - [x] Shift operators: `<< >>`
+        - [x] Index
         - [ ] Logical (short circuting): `&& ||`
-        - [ ] Index
     - [ ] Unary operators
         - [x] Address of: `&`
         - [x] Indirection: `*`
@@ -110,9 +110,10 @@ main() {
         - [x] Bitwise complement: `~`
         - [ ] Post-increment/decrement
 
-## Additional features inside `b.c`
+## Additional quirks and features inside `b.c`
 
 - Integer literals can have `_` inside them, making constants like `0xdeadc0de` more readable: `0xdead_c0de`
+- Index operator behaves differently then pointer arithmetic - `a[b] != *(a + b)`. This is due to the B assuming that memory is made from word size cells, making `a[1]` go to the second cell of array. Thus `a[b] == *(a + b * 8)`, making also index of operator not commmutative. To fix this B would need a type system (or treat every pointer as a index of cell in memory but that would potentialy break ABI). Note that this property doesn't allow us for byte like access: `*(a + 1)` wouldn't allow to read second byte allocated by `malloc(2)`.
 
 ## Resources
 

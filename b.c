@@ -102,6 +102,8 @@ struct token
 		TOK_QUESTION_MARK = '?',
 		TOK_COLON = ':',
 		TOK_BITWISE_NOT = '~',
+		TOK_BRACKET_OPEN = '[',
+		TOK_BRACKET_CLOSE = ']',
 
 		// Make sure that non ascii tokens start after ascii letters
 		TOK_IDENTIFIER = 127,
@@ -148,9 +150,6 @@ struct token
 	char const *p;
 };
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-
 // Operators that share the same first character must come first
 struct {
 	enum token_kind kind;
@@ -194,6 +193,8 @@ struct {
 	{ TOK_QUESTION_MARK, "?" },
 	{ TOK_COLON, ":" },
 	{ TOK_BITWISE_NOT, "~" },
+	{ TOK_BRACKET_OPEN, "[" },
+	{ TOK_BRACKET_CLOSE, "]" },
 
 	{ TOK_AUTO, "auto" },
 	{ TOK_CASE, "case" },
@@ -205,8 +206,6 @@ struct {
 	{ TOK_SWITCH, "switch" },
 	{ TOK_WHILE, "while" },
 };
-
-#pragma GCC diagnostic pop
 
 char const* token_kind_short_name(enum token_kind kind)
 {
@@ -1130,6 +1129,39 @@ bool parse_atomic(struct parser *p, struct compiler *compiler, struct value *lhs
 	return true;
 }
 
+bool parse_primary_expression(struct parser *p, struct compiler *compiler, struct value *result)
+{
+	if (!parse_atomic(p, compiler, result)) {
+		return false;
+	}
+
+	struct value lhs = *result;
+
+	struct token open;
+	if (expect_token(p, &open, '[')) {
+		struct value index;
+		if (!parse_expression(p, compiler, &index)) {
+			errorf(open, "expected index expression\n");
+			exit(1);
+		}
+
+		*result = (struct value) { .kind = LVALUE_PTR, .offset = alloc_stack(compiler) };
+		mov_into_reg("rax", lhs);
+		mov_into_reg("rcx", index);
+		printf("\tlea rax, [rax+rcx*8]\n");
+		printf("\tmov [rbp-%zu], rax\n", result->offset);
+
+		struct token close;
+		if (!expect_token(p, &close, ']')) {
+			errorf(close, "expected close ] for the open [, got %s\n", token_short_name(close));
+			notef(open, "[ was opened here\n");
+			exit(1);
+		}
+	}
+
+	return true;
+}
+
 bool parse_unary(struct parser *p, struct compiler *compiler, struct value *result)
 {
 	struct token and_;
@@ -1140,14 +1172,23 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 			exit(1);
 		}
 
-		if (val.kind != LVALUE_AUTO) {
+		switch (val.kind) {
+		case LVALUE_PTR:
+			*result = (struct value) { .kind = RVALUE, .offset = val.offset };
+			return true;
+
+		case LVALUE_AUTO:
+			*result = (struct value) { .kind = RVALUE, .offset = alloc_stack(compiler) };
+			printf("\tlea rax, [rbp-%zu]\n", val.offset);
+			printf("\tmov [rbp-%zu], rax\n", result->offset);
+			return true;
+
+		case RVALUE:
+		case EMPTY:
 			errorf(and_, "address of operator expects lvalue\n");
 			exit(1);
 		}
 
-		*result = (struct value) { .kind = RVALUE, .offset = alloc_stack(compiler) };
-		printf("\tlea rax, [rbp-%zu]\n", val.offset);
-		printf("\tmov [rbp-%zu], rax\n", result->offset);
 		return true;
 	}
 
@@ -1284,7 +1325,7 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 		}
 	}
 
-	return parse_atomic(p, compiler, result);
+	return parse_primary_expression(p, compiler, result);
 }
 
 bool parse_expression(struct parser *p, struct compiler *compiler, struct value *result)
