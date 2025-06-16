@@ -1588,12 +1588,12 @@ bool parse_function_definition(struct parser *p, struct compiler *compiler, stru
 	enter_scope(compiler);
 
 	size_t arguments_count = 0;
+	struct token args[ARRAY_LEN(ABI_REGISTERS)];
 	for (;;) {
 		struct token arg = {};
 		if (expect_token(p, &arg, TOK_IDENTIFIER)) {
-			struct symbol arg_sym = define_symbol(compiler, ((struct symbol) { .kind = LOCAL, .name = arg.text, .offset = alloc_stack(compiler) }), arg);
 			assert(arguments_count < ARRAY_LEN(ABI_REGISTERS));
-			printf("\tmov [rbp-%zu], %s\n", arg_sym.offset, ABI_REGISTERS[arguments_count++]);
+			args[arguments_count++] = arg;
 		}
 
 		struct token next;
@@ -1607,6 +1607,17 @@ bool parse_function_definition(struct parser *p, struct compiler *compiler, stru
 			exit(2);
 		}
 	}
+
+	for (size_t i = arguments_count - 1; i < arguments_count; --i) {
+		struct token arg = args[i];
+		struct symbol arg_sym = define_symbol(compiler, ((struct symbol) {
+			.kind = LOCAL,
+			.name = arg.text,
+			.offset = alloc_stack(compiler) }),
+			arg);
+		printf("\tmov [rbp-%zu], %s\n", arg_sym.offset, ABI_REGISTERS[i]);
+	}
+
 
 	if (!parse_statement(p, compiler)) {
 		struct token tok = peek_token(p);
