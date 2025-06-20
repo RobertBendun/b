@@ -1,0 +1,22 @@
+main() extrn printf; {
+	printf(    "1*n",
+	1 + printf("2*n",
+	1 + printf("3*n",
+	1 + printf("4*n",
+	1 + printf("5*n",
+	1 + printf("6*n",
+	1 + printf("7*n",
+	1 + printf("8*n",
+	1 + printf("9*n",
+	1 + printf("10*n",
+	1 + printf("11*n",
+	1 + printf("12*n",
+	1 + printf("13*n",
+	1 + printf("14*n",
+	1 + printf("15*n",
+	1 + printf("16*n",
+	1 + printf("17*n",
+	1 + printf("18*n",
+	1 + printf("19*n",
+	1 + printf("20*n"))))))))))))))))))));
+}
