@@ -1501,8 +1501,6 @@ bool parse_if(struct parser *p, struct compiler *compiler)
 		exit(2);
 	}
 
-
-
 	enter_scope(compiler);
 
 	size_t else_label = compiler->last_local_id++;

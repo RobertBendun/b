@@ -1,4 +1,47 @@
 -----------------------------------------------------------
+Default parameters
+-----------------------------------------------------------
+
+As done in C++, they can be used not only as a way to provide some defaults (boring use),
+but also for code injection to the caller.
+
+less(a, b) return(a < b);
+
+sort(xs, n, cmp = less) {
+	...
+}
+
+
+assert(value, msg, file = __builtin_file(), line = __builtin_line(), column = __builtin_column()) {
+	...
+}
+
+in caller:
+
+assert(x >= 0, "x must be non-negative");
+
+means:
+
+assert(x >= 0, "x must be non-negative, __builtin_file(), __builtin_line, __builtin_column);
+
+this can have interesting interaction with extrn:
+
+main() {
+	extrn assert(condition, msg, file = "file hardcoded", line = __builtin_line(), column = __builtin_column());
+
+	assert(...); // here with hardcoded file
+}
+
+assert(value, msg, file = __builtin_file(), line = __builtin_line(), column = __builtin_column()) {
+	...
+}
+
+foo() {
+	assert(...); // here with actual file
+}
+
+
+-----------------------------------------------------------
 break and continue with labels
 -----------------------------------------------------------
 
