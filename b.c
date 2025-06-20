@@ -1610,6 +1610,7 @@ bool parse_statement(struct parser *p, struct compiler *compiler)
 		return true;
 	}
 
+	// TODO: parse_expression_statement?
 	struct value result;
 	if (parse_expression(p, compiler, &result)) {
 		struct token semicolon;

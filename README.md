@@ -86,6 +86,9 @@ main() {
 
 ## Implementation progress [`b.c`](./b.c)
 
+[One-pass compiler](https://en.wikipedia.org/wiki/One-pass_compiler) (meaning: compiler that in single pass outputs multi-pass assembly) that directly produces *very* unoptimized assembly.
+When all of the features of the language are implemented then I would start to make code generation better (including some optimizations), possibly splitting project in half - into one pass and multi pass backends.
+
 - [ ] Literals
     - [x] Character literals
     - [x] String literals
