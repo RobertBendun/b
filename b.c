@@ -338,8 +338,7 @@ size_t alloc_stack(struct compiler *compiler)
 		compiler->stack_capacity = 16;
 	}
 
-	size_t offset = compiler->stack_current_offset;
-	compiler->stack_current_offset += sizeof(uint64_t);
+	size_t offset = (compiler->stack_current_offset += sizeof(uint64_t));
 	if (compiler->stack_current_offset > compiler->stack_capacity) {
 		compiler->stack_capacity *= 2;
 	}
@@ -510,6 +509,7 @@ bool expect_token_if(struct parser *p, struct token *tok, bool(*predicate)(enum 
 	return false;
 }
 
+// TODO: Add literal value type
 struct value
 {
 	enum {
@@ -1074,7 +1074,6 @@ void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, str
 		return;
 	}
 
-	assert(op.kind != TOK_QUESTION_MARK && "not implemented yet for ternary");
 
 	// For expression a op b next c, op has higher precedense then next so we
 	// should parse as (a op b) next c. otherwise we should parse a op (b next c)
@@ -1085,17 +1084,26 @@ void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, str
 		assert(associativity(op.kind) == associativity(next.kind));
 	}
 
-	// For logical operators:
-	// bind_left:  (a op b) op c
-	// bind_right: a op (b op c)
+	// For ternary:
+	//   bind_left:  (condition ? then : 'else: rhs) 'end: op parse_rhs
+	//   bind_right: condition ? then : 'else: (rhs op parse_rhs) 'end:
+	// else label is already emitted at this point
 
 	if (bind_left) {
+		assert(op.kind != TOK_QUESTION_MARK && "is there ever situation where we bind left?");
 		emit_op(compiler, result, lhs, op.kind, rhs, end_label);
 		parse_rhs(p, compiler, next, result, *result);
 	} else {
 		struct value rhs_result;
 		parse_rhs(p, compiler, next, &rhs_result, rhs);
-		emit_op(compiler, result, lhs, op.kind, rhs_result, end_label);
+
+		if (op.kind == TOK_QUESTION_MARK) {
+			mov_into_reg("rax", rhs_result);
+			printf("\tmov [rbp-%zu], rax\n", result->offset);
+			printf(".local_%zu:\n", end_label);
+		} else {
+			emit_op(compiler, result, lhs, op.kind, rhs_result, end_label);
+		}
 	}
 }
 
@@ -1345,7 +1353,6 @@ bool parse_unary(struct parser *p, struct compiler *compiler, struct value *resu
 		}
 		return true;
 	}
-
 
 
 	struct token deref;
