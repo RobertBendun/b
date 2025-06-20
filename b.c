@@ -850,7 +850,7 @@ bool is_operator(enum token_kind kind)
 
 void emit_op(struct compiler *compiler, struct value *result, struct value lhsv, enum token_kind op, struct value rhsv, size_t end_label)
 {
-	if (op == TOK_LOGICAL_OR || op == TOK_LOGICAL_AND) {
+	if (op == TOK_LOGICAL_OR || op == TOK_LOGICAL_AND || op == TOK_QUESTION_MARK) {
 		mov_into_reg("rax", rhsv);
 		printf("\tmov [rbp-%zu], rax\n", result->offset);
 		printf(".local_%zu:\n", end_label);
@@ -1062,14 +1062,6 @@ void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, str
 
 	struct token next;
 	if (!expect_token_if(p, &next, is_operator)) {
-		if (op.kind == TOK_QUESTION_MARK) {
-			else_ = rhs;
-			mov_into_reg("rax", else_);
-			printf("\tmov [rbp-%zu], rax\n", result->offset);
-			printf(".local_%zu:\n", end_label);
-			return;
-		}
-
 		emit_op(compiler, result, lhs, op.kind, rhs, end_label);
 		return;
 	}
@@ -1096,14 +1088,7 @@ void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, str
 	} else {
 		struct value rhs_result;
 		parse_rhs(p, compiler, next, &rhs_result, rhs);
-
-		if (op.kind == TOK_QUESTION_MARK) {
-			mov_into_reg("rax", rhs_result);
-			printf("\tmov [rbp-%zu], rax\n", result->offset);
-			printf(".local_%zu:\n", end_label);
-		} else {
-			emit_op(compiler, result, lhs, op.kind, rhs_result, end_label);
-		}
+		emit_op(compiler, result, lhs, op.kind, rhs_result, end_label);
 	}
 }
 
