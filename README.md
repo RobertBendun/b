@@ -105,10 +105,10 @@ main() {
     - [x] compound statement
     - [x] `if`
     - [x] empty statement
-    - [ ] `goto`
+    - [x] `goto`
+    - [x] statement labels
     - [ ] `switch`
     - [ ] `case`
-    - [ ] statement labels
 - [x] Expressions
     - [x] Function call
     - [x] Constant

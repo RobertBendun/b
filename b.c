@@ -294,7 +294,6 @@ char const* token_short_name(struct token tok);
 struct parser
 {
 	struct tokenizer tokenizer;
-	struct token backlog;
 };
 
 struct symbol
@@ -316,6 +315,13 @@ struct scope
 	size_t stack_offset;
 };
 
+struct label
+{
+	char const* name;
+	bool defined;
+	struct token first_usage;
+};
+
 struct compiler
 {
 #define MAX_SCOPE_NESTING 64
@@ -330,6 +336,11 @@ struct compiler
 		char const **items;
 		size_t count, capacity;
 	} defined_externs;
+
+	struct {
+		struct label *items;
+		size_t count, capacity;
+	} function_labels;
 };
 
 size_t alloc_stack(struct compiler *compiler)
@@ -397,10 +408,6 @@ struct symbol define_symbol(struct compiler *compiler, struct symbol symbol, str
 	return symbol;
 }
 
-struct token get_token(struct parser *p);
-void putback_token(struct parser *p, struct token tok);
-bool expect_token(struct parser *p, struct token *tok, enum token_kind kind);
-
 void parse_program(struct parser *p, struct compiler *compiler);
 bool parse_statement(struct parser *p, struct compiler *compiler);
 
@@ -466,46 +473,47 @@ int main()
 #endif
 }
 
-struct token get_token(struct parser *p)
-{
-	if (p->backlog.kind == TOK_EOF)
-		return scan(&p->tokenizer);
-	struct token tok = p->backlog;
-	p->backlog = (struct token){};
-	return tok;
-}
-
 struct token peek_token(struct parser *p)
 {
-	if (p->backlog.kind != TOK_EOF) {
-		p->backlog = scan(&p->tokenizer);
-	}
-	return p->backlog;
-}
-
-void putback_token(struct parser *p, struct token tok)
-{
-	assert(p->backlog.kind == TOK_EOF);
-	p->backlog = tok;
+	size_t save = p->tokenizer.head;
+	struct token next = scan(&p->tokenizer);
+	p->tokenizer.head = save;
+	return next;
 }
 
 bool expect_token(struct parser *p, struct token *tok, enum token_kind kind)
 {
-	*tok = get_token(p);
-	if (tok->kind == kind) {
+	size_t save = p->tokenizer.head;
+	*tok = scan(&p->tokenizer);
+
+	if (tok->kind != kind) {
+		p->tokenizer.head = save;
+		return false;
+	}
+	return true;
+}
+
+bool expect_token2(struct parser *p, struct token *tok1, enum token_kind kind1, struct token *tok2, enum token_kind kind2)
+{
+	size_t save = p->tokenizer.head;
+
+	if ((*tok1 = scan(&p->tokenizer)).kind == kind1
+	&&  (*tok2 = scan(&p->tokenizer)).kind == kind2) {
 		return true;
 	}
-	putback_token(p, *tok);
+
+	p->tokenizer.head = save;
 	return false;
 }
 
+
 bool expect_token_if(struct parser *p, struct token *tok, bool(*predicate)(enum token_kind))
 {
-	*tok = get_token(p);
-	if (predicate(tok->kind)) {
+	size_t save = p->tokenizer.head;
+	if (predicate((*tok = scan(&p->tokenizer)).kind)) {
 		return true;
 	}
-	putback_token(p, *tok);
+	p->tokenizer.head = save;
 	return false;
 }
 
@@ -654,6 +662,37 @@ bool parse_auto(struct parser *p, struct compiler *compiler)
 	}
 
 	return parse_statement(p, compiler);
+}
+
+bool parse_goto(struct parser *p, struct compiler *compiler)
+{
+	struct token goto_, identifier;
+	if (!expect_token(p, &goto_, TOK_GOTO)) {
+		return false;
+	}
+	if (!expect_token(p, &identifier, TOK_IDENTIFIER)) {
+		errorf(identifier, "goto expects an identifier, got instead %s\n", token_short_name(identifier));
+		return false;
+	}
+	size_t label = -1;
+
+	for (size_t i = 0; i < compiler->function_labels.count; ++i) {
+		if (strcmp(compiler->function_labels.items[i].name, identifier.text) == 0) {
+			label = i;
+			break;
+		}
+	}
+
+	// If we haven't find label it will be defined in the future (hopefully)
+	// at the end of the function we need to check if all labels have been defined
+	if (label == (size_t)-1) {
+		struct label new = { .name = identifier.text, .defined = false, .first_usage = identifier };
+		da_append(&compiler->function_labels, new);
+		label = compiler->function_labels.count;
+	}
+
+	printf("\tjmp .label_%zu\n", label);
+	return true;
 }
 
 bool parse_empty_statement(struct parser *p)
@@ -1002,8 +1041,8 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 void parse_rhs(struct parser *p, struct compiler *compiler, struct token op, struct value *result, struct value lhs)
 {
 	// Infrastructure for ternary:
-	// result = condition ? then : else_
-	struct value condition, then, else_;
+	// result = condition ? then : else
+	struct value condition, then;
 	size_t else_label, end_label;
 
 	if (op.kind == TOK_QUESTION_MARK) {
@@ -1532,9 +1571,33 @@ bool parse_statement(struct parser *p, struct compiler *compiler)
 	}
 #endif
 
+	struct token identifier, colon;
+	if (expect_token2(p, &identifier, TOK_IDENTIFIER, &colon, TOK_COLON)) {
+		struct label *found = NULL;
+
+		for (size_t i = 0; i < compiler->function_labels.count; ++i) {
+			if (strcmp(identifier.text, compiler->function_labels.items[i].name) == 0) {
+				found = &compiler->function_labels.items[i];
+			}
+		}
+
+		if (!found) {
+			struct label new = { .defined = true, .name = identifier.text };
+			da_append(&compiler->function_labels, new);
+			found = &compiler->function_labels.items[compiler->function_labels.count-1];
+		} else if (found->defined) {
+			errorf(identifier, "label has already been defined");
+			exit(1);
+		} else {
+			found->defined = true;
+		}
+		printf(".label_%zu:\n", found - compiler->function_labels.items);
+	}
+
 	if (parse_empty_statement(p)
 	|| parse_auto(p, compiler)
 	|| parse_extern(p, compiler)
+	|| parse_goto(p, compiler)
 	|| parse_compund_statement(p, compiler))
 	{
 		return true;
@@ -1569,6 +1632,7 @@ bool parse_function_definition(struct parser *p, struct compiler *compiler, stru
 	}
 
 	assert(compiler->nesting == 0);
+	compiler->function_labels.count = 0;
 
 	struct symbol fun = define_symbol(compiler, ((struct symbol) { .kind = GLOBAL, .name = name.text }), name);
 
@@ -1630,6 +1694,18 @@ bool parse_function_definition(struct parser *p, struct compiler *compiler, stru
 	compiler->stack_capacity = 0;
 	compiler->stack_current_offset = 0;
 
+	for (size_t i = 0; i < compiler->function_labels.count; ++i) {
+		if (!compiler->function_labels.items[i].defined) {
+			errorf(
+				compiler->function_labels.items[i].first_usage,
+				"label %s has not been defined inside the function %s\n",
+				compiler->function_labels.items[i].name,
+				name.text
+			);
+			exit(1);
+		}
+	}
+
 	return true;
 }
 
@@ -1648,9 +1724,9 @@ void parse_program(struct parser *p, struct compiler *compiler)
 {
 	while (parse_definition(p, compiler)) {}
 
-	struct token next = peek_token(p);
-	if (next.kind != TOK_EOF) {
-		errorf(next, "stray '%s' at the end of the program\n", token_short_name(next));
+	struct token eof;
+	if (!expect_token(p, &eof, TOK_EOF)) {
+		errorf(eof, "stray '%s' at the end of the program\n", token_short_name(eof));
 		exit(1);
 	}
 }
