@@ -96,9 +96,9 @@ When all of the features of the language are implemented then I would start to m
     - [x] Hexadecimal integer literals
     - [x] Octal integer literals
     - [ ] Multicharacter literals
-- [ ] Definitions
+- [x] Definitions
     - [x] Functions
-    - [ ] Global variable definition
+    - [x] Global variable definition
 - [ ] Statements
     - [x] `extrn`
     - [x] `auto`
