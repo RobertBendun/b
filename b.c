@@ -322,6 +322,16 @@ struct label
 	struct token first_usage;
 };
 
+struct data
+{
+	size_t id;
+	bool is_vec;
+	struct token declared_size;
+
+	struct token *items;
+	size_t count, capacity;
+};
+
 struct compiler
 {
 #define MAX_SCOPE_NESTING 64
@@ -341,6 +351,11 @@ struct compiler
 		struct label *items;
 		size_t count, capacity;
 	} function_labels;
+
+	struct {
+		struct data *items;
+		size_t count, capacity;
+	} data_section;
 };
 
 size_t alloc_stack(struct compiler *compiler)
@@ -456,6 +471,41 @@ int main()
 	printf("format ELF64\n");
 	printf("section \".text\" executable\n");
 	parse_program(&parser, &compiler);
+
+	// TODO: Move globals without init to bss
+	printf("section \".data\" writeable\n");
+	for (size_t i = 0; i < compiler.data_section.count; ++i) {
+		struct data data = compiler.data_section.items[i];
+		uint64_t actual_size = data.count;
+
+		if (data.is_vec) {
+			if (actual_size < data.declared_size.ival) {
+				actual_size = data.declared_size.ival;
+			}
+			printf("sym_%zu: dq $+8\n", data.id);
+			// TODO: error message
+			assert(actual_size != 0);
+		} else {
+			printf("sym_%zu:\n", data.id);
+			if (actual_size == 0) {
+				printf("\tdq 0\n");
+				continue;
+			}
+		}
+
+
+		printf("\tdq ");
+
+		for (size_t i = 0; i < actual_size; ++i) {
+			if (i > 0) { printf(","); }
+			if (i < data.count) {
+				printf("%"PRIu64, data.items[i].ival);
+			} else {
+				printf("0");
+			}
+		}
+		printf("\n");
+	}
 
 	printf("section \".rodata\"\n");
 
@@ -1183,7 +1233,20 @@ bool parse_atomic(struct parser *p, struct compiler *compiler, struct value *lhs
 	}
 #endif
 
-	assert(symbol->kind == LOCAL && "external or global symbols are only supported by function calls for now");
+	switch (symbol->kind) {
+	case LOCAL:
+		// TODO: Move handling from parse_name
+		return true;
+
+	case GLOBAL:
+		*lhs = (struct value) { .kind = LVALUE_PTR, .offset = alloc_stack(compiler) };
+		printf("\tlea rax, [sym_%zu]\n", symbol->id);
+		printf("\tmov [rbp-%zu], rax\n", lhs->offset);
+		return true;
+
+	NOT_IMPLEMENTED_FOR(EXTERNAL);
+	}
+
 	return true;
 }
 
@@ -1709,6 +1772,46 @@ bool parse_function_definition(struct parser *p, struct compiler *compiler, stru
 }
 
 
+void parse_definition_value_list(struct parser *p, struct compiler *compiler, struct data *data)
+{
+	(void)compiler;
+
+	struct token semicolon, value, separator;
+
+	while (expect_token(p, &value, TOK_INTEGER)) {
+		da_append(data, value);
+		if (expect_token(p, &separator, ',')) continue;
+		break;
+	}
+
+	if (!expect_token(p, &semicolon, ';')) {
+		errorf(semicolon, "expected ; at the end of global variable definition, got %s\n", token_short_name(semicolon));
+		exit(1);
+	}
+}
+
+bool parse_global_variable_definition(struct parser *p, struct compiler *compiler, struct token name)
+{
+	struct token open, close, size;
+	struct data data = {};
+
+	if (expect_token(p, &open, '[')) {
+		if (!expect_token(p, &close, ']') && !expect_token2(p, &size, TOK_INTEGER, &close, ']')) {
+			errorf(close, "expected closing bracket or integer size, got %s\n", token_short_name(close));
+			notef(open, "bracket was opened here\n");
+			exit(1);
+		}
+		data.is_vec = true;
+		data.declared_size = size;
+	}
+
+	data.id = define_symbol(compiler, (struct symbol) { .kind = GLOBAL, .name = name.text }, name).id;
+	parse_definition_value_list(p, compiler, &data);
+	da_append(&compiler->data_section, data);
+
+	return true;
+}
+
 bool parse_definition(struct parser *p, struct compiler *compiler)
 {
 	struct token name;
@@ -1716,7 +1819,8 @@ bool parse_definition(struct parser *p, struct compiler *compiler)
 		return false;
 	}
 
-	return parse_function_definition(p, compiler, name);
+	return parse_function_definition(p, compiler, name)
+		|| parse_global_variable_definition(p, compiler, name);
 }
 
 void parse_program(struct parser *p, struct compiler *compiler)
