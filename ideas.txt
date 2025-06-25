@@ -1,4 +1,24 @@
 -----------------------------------------------------------
+Constants
+-----------------------------------------------------------
+
+Some variables can be automatically recognized as constants (and treated as such).
+Maybe this is enough to not introduce constants for now (but warnings / errors about shadowing global variables would be useful)
+
+
+N 10; /* N is treated as a constant */
+numbers[N]; /* thats why N can be used as a size of array */
+
+foo() extrn printf; {
+	auto x;
+
+	printf("%d*n", N); /* N is not treated as a constant - some other function could modify it by now */
+
+	x = 10; /* x is treated as a constant */
+	&x;     /* from now x is not treated as a constant */
+}
+
+-----------------------------------------------------------
 Default parameters
 -----------------------------------------------------------
 
