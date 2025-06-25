@@ -112,6 +112,8 @@ When all of the features of the language are implemented then I would start to m
     - [x] statement labels
     - [ ] `switch`
     - [ ] `case`
+    - [ ] `break`
+    - [ ] `continue`
 - [x] Expressions
     - [x] Function call
     - [x] Constant
