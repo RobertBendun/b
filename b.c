@@ -22,6 +22,7 @@ struct string_builder
 
 #define ARRAY_LEN(A) (sizeof(A) / sizeof(*(A)))
 
+
 #define INITIAL_CAPACITY 32
 
 #define da_append(where, what) do { \
@@ -34,6 +35,8 @@ struct string_builder
 	} \
 	(where)->items[(where)->count++] = (what); \
 } while(0)
+
+#define da_back(da) ((da).items[(da).count-1])
 
 struct string_pool
 {
@@ -118,6 +121,7 @@ struct token
 		TOK_RETURN,
 		TOK_SWITCH,
 		TOK_WHILE,
+		TOK_BREAK,
 
 		// Literals:
 		TOK_INTEGER,
@@ -210,6 +214,7 @@ struct {
 	{ TOK_RETURN, "return" },
 	{ TOK_SWITCH, "switch" },
 	{ TOK_WHILE, "while" },
+	{ TOK_BREAK, "break" },
 };
 
 char const* token_kind_short_name(enum token_kind kind)
@@ -332,6 +337,27 @@ struct data
 	size_t count, capacity;
 };
 
+
+// TODO: Add literal value type
+struct value
+{
+	enum {
+		EMPTY,
+		RVALUE,
+		LVALUE_AUTO,
+		LVALUE_PTR,
+	} kind;
+	union { size_t offset; };
+};
+
+struct control
+{
+	enum token_kind kind;
+	struct value lhs; // value to compare to in switch
+	size_t next;      // next case for switch, next iteration for while
+	size_t end;       // end of switch, end of while
+};
+
 struct compiler
 {
 #define MAX_SCOPE_NESTING 64
@@ -356,6 +382,11 @@ struct compiler
 		struct data *items;
 		size_t count, capacity;
 	} data_section;
+
+	struct {
+		struct control *items;
+		size_t count, capacity;
+	} control;
 };
 
 size_t alloc_stack(struct compiler *compiler)
@@ -566,18 +597,6 @@ bool expect_token_if(struct parser *p, struct token *tok, bool(*predicate)(enum 
 	p->tokenizer.head = save;
 	return false;
 }
-
-// TODO: Add literal value type
-struct value
-{
-	enum {
-		EMPTY,
-		RVALUE,
-		LVALUE_AUTO,
-		LVALUE_PTR,
-	} kind;
-	union { size_t offset; };
-};
 
 void mov_into_reg(char const* dst, struct value src)
 {
@@ -1501,6 +1520,56 @@ bool parse_expression(struct parser *p, struct compiler *compiler, struct value 
 	return false;
 }
 
+bool parse_switch(struct parser *p, struct compiler *compiler)
+{
+	struct token switch_;
+	if (!expect_token(p, &switch_, TOK_SWITCH)) {
+		return false;
+	}
+
+	struct token open;
+	if (!expect_token(p, &open, TOK_PAREN_OPEN)) {
+		errorf(open, "expected open paren after switch, got %s\n", token_short_name(open));
+		exit(2);
+	}
+
+	enter_scope(compiler);
+
+	struct value lhs;
+	if (!parse_expression(p, compiler, &lhs)) {
+		errorf(open, "expected value inside switch\n");
+		exit(2);
+	}
+
+	struct token close;
+	if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
+		errorf(close, "expected close paren, got %s\n", token_short_name(close));
+		notef(open, "paren was open here\n");
+		exit(2);
+	}
+
+	struct control info;
+	info.kind = TOK_SWITCH;
+	info.lhs = lhs;
+	info.next = compiler->last_local_id++;
+	info.end = compiler->last_local_id++;
+	da_append(&compiler->control, info);
+
+	printf("\tjmp .local_%zu\n", info.next);
+
+	if (!parse_statement(p, compiler)) {
+		errorf(close, "expected statement after switch\n");
+		exit(2);
+	}
+
+	printf(".local_%zu:\n", da_back(compiler->control).next);
+	printf(".local_%zu:\n", da_back(compiler->control).end);
+
+	leave_scope(compiler);
+	compiler->control.count--;
+
+	return true;
+}
 
 bool parse_while(struct parser *p, struct compiler *compiler)
 {
@@ -1612,6 +1681,22 @@ bool parse_if(struct parser *p, struct compiler *compiler)
 	return true;
 }
 
+bool parse_break(struct parser *p, struct compiler *compiler)
+{
+	struct token break_;
+	if (!expect_token(p, &break_, TOK_BREAK)) {
+		return false;
+	}
+
+	if (compiler->control.count-1 > compiler->control.count) {
+		errorf(break_, "break outside of switch or while\n");
+		exit(1);
+	}
+
+	printf("\tjmp .local_%zu\n", compiler->control.items[compiler->control.count-1].end);
+	return true;
+}
+
 bool parse_statement(struct parser *p, struct compiler *compiler)
 {
 	// TODO: Add compiler flag that would output this information
@@ -1632,41 +1717,92 @@ bool parse_statement(struct parser *p, struct compiler *compiler)
 	}
 #endif
 
-	struct token identifier, colon;
-	if (expect_token2(p, &identifier, TOK_IDENTIFIER, &colon, TOK_COLON)) {
-		struct label *found = NULL;
+	bool done_something;
+	do {
+		done_something = false;
 
-		for (size_t i = 0; i < compiler->function_labels.count; ++i) {
-			if (strcmp(identifier.text, compiler->function_labels.items[i].name) == 0) {
-				found = &compiler->function_labels.items[i];
+		struct token identifier, colon;
+		if (expect_token2(p, &identifier, TOK_IDENTIFIER, &colon, TOK_COLON)) {
+			done_something = true;
+
+			struct label *found = NULL;
+			for (size_t i = 0; i < compiler->function_labels.count; ++i) {
+				if (strcmp(identifier.text, compiler->function_labels.items[i].name) == 0) {
+					found = &compiler->function_labels.items[i];
+				}
+			}
+
+			if (!found) {
+				struct label new = { .defined = true, .name = identifier.text };
+				da_append(&compiler->function_labels, new);
+				found = &compiler->function_labels.items[compiler->function_labels.count-1];
+			} else if (found->defined) {
+				errorf(identifier, "label has already been defined");
+				exit(1);
+			} else {
+				found->defined = true;
+			}
+			printf(".label_%zu:\n", found - compiler->function_labels.items);
+			done_something = true;
+		}
+
+		struct token case_;
+		if (expect_token(p, &case_, TOK_CASE)) {
+			size_t after_test = compiler->last_local_id++;
+
+			done_something = true;
+			struct control *switch_info = NULL;
+
+			for (size_t i = compiler->control.count - 1; i < compiler->control.count; --i) {
+				struct control *ctrl = &compiler->control.items[i];
+				if (ctrl->kind == TOK_SWITCH) {
+					switch_info = ctrl;
+					break;
+				}
+			}
+			if (!switch_info) {
+				errorf(case_, "case outside of switch\n");
+				exit(1);
+			}
+
+			printf("\tjmp .local_%zu\n", after_test);
+			printf(".local_%zu:\n", switch_info->next);
+			switch_info->next = compiler->last_local_id++;
+
+			struct value rhs;
+			// TODO: Parsing wrong item here
+			if (!parse_atomic(p, compiler, &rhs)) {
+				errorf(case_, "expected constant expression\n");
+				exit(1);
+			}
+
+			mov_into_reg("rax", switch_info->lhs);
+			mov_into_reg("rcx", rhs);
+			printf("\tcmp rax, rcx\n");
+			printf("\tjne .local_%zu\n", switch_info->next);
+			printf(".local_%zu:\n", after_test);
+
+			struct token colon;
+			if (!expect_token(p, &colon, TOK_COLON)) {
+				errorf(colon, "expected :, got %s\n", token_short_name(colon));
+				exit(1);
 			}
 		}
-
-		if (!found) {
-			struct label new = { .defined = true, .name = identifier.text };
-			da_append(&compiler->function_labels, new);
-			found = &compiler->function_labels.items[compiler->function_labels.count-1];
-		} else if (found->defined) {
-			errorf(identifier, "label has already been defined");
-			exit(1);
-		} else {
-			found->defined = true;
-		}
-		printf(".label_%zu:\n", found - compiler->function_labels.items);
-	}
+	} while (done_something);
 
 	if (parse_empty_statement(p)
 	|| parse_auto(p, compiler)
 	|| parse_extern(p, compiler)
 	|| parse_goto(p, compiler)
-	|| parse_compund_statement(p, compiler))
+	|| parse_compund_statement(p, compiler)
+	|| parse_break(p, compiler))
 	{
 		return true;
 	}
 
 	size_t stack_offset = compiler->stack_current_offset;
 
-	if (parse_return(p, compiler) || parse_while(p, compiler) || parse_if(p, compiler)) {
+	if (parse_return(p, compiler) || parse_while(p, compiler) || parse_if(p, compiler) || parse_switch(p, compiler)) {
 		compiler->stack_current_offset = stack_offset;
 		return true;
 	}
