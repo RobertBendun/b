@@ -9,6 +9,9 @@ Maybe this is enough to not introduce constants for now (but warnings / errors a
 N 10; /* N is treated as a constant */
 numbers[N]; /* thats why N can be used as a size of array */
 
+M 20; /* M is used to denote 20 characters */
+chars[(M + &0[1] - 1) / &0[1]]; /* ceil integer division of M characters by &0[1] which encodes word size */
+
 foo() extrn printf; {
 	auto x;
 
