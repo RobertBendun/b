@@ -99,7 +99,7 @@ When all of the features of the language are implemented then I would start to m
 - [x] Definitions
     - [x] Functions
     - [x] Global variable definition
-- [ ] Statements
+- [x] Statements
     - [x] `extrn`
     - [x] `auto`
     - [x] `return`
@@ -112,8 +112,8 @@ When all of the features of the language are implemented then I would start to m
     - [x] statement labels
     - [x] `switch`
     - [x] `case`
-    - [ ] `break`
-    - [ ] `continue`
+    - [x] `break`
+    - [x] `continue`
 - [x] Expressions
     - [x] Function call
     - [x] Constant

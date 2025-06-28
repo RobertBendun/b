@@ -122,6 +122,7 @@ struct token
 		TOK_SWITCH,
 		TOK_WHILE,
 		TOK_BREAK,
+		TOK_CONTINUE,
 
 		// Literals:
 		TOK_INTEGER,
@@ -215,6 +216,7 @@ struct {
 	{ TOK_SWITCH, "switch" },
 	{ TOK_WHILE, "while" },
 	{ TOK_BREAK, "break" },
+	{ TOK_CONTINUE, "continue" },
 };
 
 char const* token_kind_short_name(enum token_kind kind)
@@ -1562,6 +1564,7 @@ bool parse_switch(struct parser *p, struct compiler *compiler)
 		exit(2);
 	}
 
+	assert(da_back(compiler->control).kind == TOK_SWITCH);
 	printf(".local_%zu:\n", da_back(compiler->control).next);
 	printf(".local_%zu:\n", da_back(compiler->control).end);
 
@@ -1586,10 +1589,13 @@ bool parse_while(struct parser *p, struct compiler *compiler)
 
 	enter_scope(compiler);
 
-	size_t loop_again = compiler->last_local_id++;
-	size_t loop_exit = compiler->last_local_id++;
+	struct control info;
+	info.kind = TOK_WHILE;
+	info.next = compiler->last_local_id++;
+	info.end = compiler->last_local_id++;
+	da_append(&compiler->control, info);
 
-	printf(".local_%zu:\n", loop_again);
+	printf(".local_%zu:\n", info.next);
 
 	struct value cond;
 	if (!parse_expression(p, compiler, &cond)) {
@@ -1599,7 +1605,7 @@ bool parse_while(struct parser *p, struct compiler *compiler)
 
 	mov_into_reg("rax", cond);
 	printf("\tcmp rax, 0\n");
-	printf("\tje .local_%zu\n", loop_exit);
+	printf("\tje .local_%zu\n", info.end);
 
 	struct token close;
 	if (!expect_token(p, &close, TOK_PAREN_CLOSE)) {
@@ -1613,8 +1619,8 @@ bool parse_while(struct parser *p, struct compiler *compiler)
 		exit(2);
 	}
 	leave_scope(compiler);
-	printf("\tjmp .local_%zu\n", loop_again);
-	printf(".local_%zu:\n", loop_exit);
+	printf("\tjmp .local_%zu\n", info.next);
+	printf(".local_%zu:\n", info.end);
 
 
 	return true;
@@ -1694,6 +1700,32 @@ bool parse_break(struct parser *p, struct compiler *compiler)
 	}
 
 	printf("\tjmp .local_%zu\n", compiler->control.items[compiler->control.count-1].end);
+	return true;
+}
+
+bool parse_continue(struct parser *p, struct compiler *compiler)
+{
+	struct token continue_;
+	if (!expect_token(p, &continue_, TOK_CONTINUE)) {
+		return false;
+	}
+
+	struct control *while_info = NULL;
+
+	for (size_t i = compiler->control.count-1; i < compiler->control.count; --i) {
+		struct control *ctrl = &compiler->control.items[i];
+		if (ctrl->kind == TOK_WHILE) {
+			while_info = ctrl;
+			break;
+		}
+	}
+
+	if (!while_info) {
+		errorf(continue_, "continue outside of while\n");
+		exit(1);
+	}
+
+	printf("\tjmp .local_%zu\n", while_info->next);
 	return true;
 }
 
@@ -1795,7 +1827,8 @@ bool parse_statement(struct parser *p, struct compiler *compiler)
 	|| parse_extern(p, compiler)
 	|| parse_goto(p, compiler)
 	|| parse_compund_statement(p, compiler)
-	|| parse_break(p, compiler))
+	|| parse_break(p, compiler)
+	|| parse_continue(p, compiler))
 	{
 		return true;
 	}
