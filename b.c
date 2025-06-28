@@ -1278,7 +1278,13 @@ bool parse_atomic(struct parser *p, struct compiler *compiler, struct value *lhs
 
 	case EXTERNAL:
 		*lhs = (struct value) { .kind = LVALUE_PTR, .offset = alloc_stack(compiler) };
-		printf("\tlea rax, [rel %s]\n", symbol->name);
+		/* For values: printf("\tlea rax, [%s]\n", symbol->name);
+		 * For funcs:  printf("\tlea rax, [%s wrt ..plt]\n", symbol->name);
+		 *
+		 * _If_ we would write a custom linker that would know if symbol is a function or a value the integration would be seemles.
+		 * Now we either need custom address of operator for functions or introduction of function extrn and value extrn which feels like violation of B spirit.
+		 * To put this simply, B is less compatible with modern x86_64 then I thought */
+		printf("\tlea rax, [%s]\n", symbol->name);
 		printf("\tmov [rbp-%zu], rax\n", lhs->offset);
 		return true;
 	}
