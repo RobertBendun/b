@@ -16,7 +16,7 @@ run_stderr="$(mktemp)"
 
 
 if ./b <"$1" >"${asm_path}" 2>"${com_stderr}"; then
-	if ! fasm "${asm_path}" "${obj_path}" >/dev/null; then
+	if ! nasm "${asm_path}" -felf64 -o "${obj_path}"; then
 		exit 1
 	fi
 	if ! gcc -o "${exe_path}" "${obj_path}"; then

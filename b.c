@@ -501,12 +501,14 @@ int main()
 	}
 
 #else
-	printf("format ELF64\n");
-	printf("section \".text\" executable\n");
+	printf("BITS 64\n");
+	printf("DEFAULT rel\n");
+
+	printf("section \".text\" exec nowrite\n");
 	parse_program(&parser, &compiler);
 
 	// TODO: Move globals without init to bss
-	printf("section \".data\" writeable\n");
+	printf("section \".data\" write\n");
 	for (size_t i = 0; i < compiler.data_section.count; ++i) {
 		struct data data = compiler.data_section.items[i];
 		uint64_t actual_size = data.count;
@@ -532,7 +534,16 @@ int main()
 		for (size_t i = 0; i < actual_size; ++i) {
 			if (i > 0) { printf(","); }
 			if (i < data.count) {
-				printf("%"PRIu64, data.items[i].ival);
+				switch (data.items[i].kind) {
+				case TOK_STRING:
+					printf("strend - %zu", string_offset(data.items[i].text));
+					break;
+
+				case TOK_INTEGER: printf("%"PRIu64, data.items[i].ival); break;
+
+				default:
+					assert(0 && "not implemented yet");
+				}
 			} else {
 				printf("0");
 			}
@@ -550,7 +561,7 @@ int main()
 			}
 			printf(",0x00");
 		}
-		printf("\nstrend = $\n");
+		printf("\nstrend:\n");
 	}
 
 #endif
@@ -686,7 +697,7 @@ bool parse_extern(struct parser *p, struct compiler *compiler)
 			}
 		}
 		if (!found) {
-			printf("\textrn %s\n", name.text);
+			printf("\textern %s\n", name.text);
 			da_append(&compiler->defined_externs, name.text);
 		}
 
@@ -834,7 +845,7 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, struct value *r
 	printf("\txor rax, rax\n");
 
 	switch (symbol->kind) {
-		case EXTERNAL: printf("\tcall PLT %s\n", symbol->name); break;
+		case EXTERNAL: printf("\tcall %s WRT ..plt\n", symbol->name); break;
 		case GLOBAL: printf("\tcall sym_%zu\n", symbol->id); break;
 		case LOCAL: printf("\tlea r10, QWORD [rbp-%zu]\n\tcall r10\n", symbol->offset); break;
 	}
@@ -1265,7 +1276,11 @@ bool parse_atomic(struct parser *p, struct compiler *compiler, struct value *lhs
 		printf("\tmov [rbp-%zu], rax\n", lhs->offset);
 		return true;
 
-	NOT_IMPLEMENTED_FOR(EXTERNAL);
+	case EXTERNAL:
+		*lhs = (struct value) { .kind = LVALUE_PTR, .offset = alloc_stack(compiler) };
+		printf("\tlea rax, [rel %s]\n", symbol->name);
+		printf("\tmov [rbp-%zu], rax\n", lhs->offset);
+		return true;
 	}
 
 	return true;
@@ -1867,11 +1882,16 @@ bool parse_function_definition(struct parser *p, struct compiler *compiler, stru
 
 	struct symbol fun = define_symbol(compiler, ((struct symbol) { .kind = GLOBAL, .name = name.text }), name);
 
-	printf("public sym_%zu as '%s'\n", fun.id, name.text);
+	// TODO:
+
+	printf("global %s\n", name.text);
+	printf("%s:\n", name.text);
 	printf("sym_%zu:\n", fun.id);
 	printf("\tpush rbp\n");
 	printf("\tmov rbp, rsp\n");
-	printf("\tsub rsp, sym_%zu_stack_size\n", fun.id);
+	printf("\tjmp .alloc_stack\n");
+	printf(".start:\n");
+
 	enter_scope(compiler);
 
 	size_t arguments_count = 0;
@@ -1919,8 +1939,11 @@ bool parse_function_definition(struct parser *p, struct compiler *compiler, stru
 	printf("\tleave\n");
 	printf("\tret\n");
 
+	// TODO: This is silly
+	printf(".alloc_stack:\n");
+	printf("\tsub rsp, %zu\n", compiler->stack_capacity);
+	printf("\tjmp .start\n");
 
-	printf("sym_%zu_stack_size = %zu\n", fun.id, compiler->stack_capacity);
 	leave_scope(compiler);
 	compiler->stack_capacity = 0;
 	compiler->stack_current_offset = 0;
@@ -1947,7 +1970,7 @@ void parse_definition_value_list(struct parser *p, struct compiler *compiler, st
 
 	struct token semicolon, value, separator;
 
-	while (expect_token(p, &value, TOK_INTEGER)) {
+	while (expect_token(p, &value, TOK_INTEGER) || expect_token(p, &value, TOK_STRING)) {
 		da_append(data, value);
 		if (expect_token(p, &separator, ',')) continue;
 		break;

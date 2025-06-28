@@ -20,7 +20,7 @@ examples/%.asm: examples/%.b b
 	./b <$< >$@
 
 examples/%.o: examples/%.asm
-	fasm $< $@
+	nasm $< -felf64 -o $@
 
 examples/%: examples/%.o
 	$(CC) $< -o $@
@@ -29,7 +29,7 @@ examples/opt/%.asm: examples/opt/%.b b
 	./b <$< >$@
 
 examples/opt/%.o: examples/opt/%.asm
-	fasm $< $@
+	nasm $< -felf64 -o $@
 
 examples/opt/%: examples/opt/%.o
 	$(CC) $< -o $@
