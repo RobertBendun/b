@@ -41,6 +41,12 @@ page "<!DOCTYPE html>
 	</body>
 </html>";
 
+exchange(p, new) {
+	auto old;
+	old = *p;
+	*p = new;
+	return(old);
+}
 
 http_new() {
 	extrn socket, setsockopt, bind, listen;
@@ -84,12 +90,12 @@ remove_prefix_if_exists(s, len, prefix) extrn strncmp, strlen; {
 
 http_accept_request(server, clientp, method, url, body) {
 	/* posix */ extrn accept, read;
-	/* libc  */ extrn strstr, perror, strncmp, fprintf, stderr;
+	/* libc  */ extrn strstr, perror, strncmp, fprintf, stderr, memchr;
 	auto client;
 
 	if ((client = accept(server, 0, 0)) < 0) return(0);
 
-	auto r, p, sz;
+	auto r, p, sz, endp;
 
 	r = read(client, buf, bufsize - 1);
 	if (r < 0) {
@@ -103,17 +109,23 @@ http_accept_request(server, clientp, method, url, body) {
 	sz = r;
 
 	if (0) {}
-	else if (remove_prefix_if_exists(&p, &sz, "GET"))  { *method = "GET"; }
-	else if (remove_prefix_if_exists(&p, &sz, "HEAD"))  { *method = "HEAD"; }
-	else if (remove_prefix_if_exists(&p, &sz, "POST")) { *method = "POST"; }
-	else if (remove_prefix_if_exists(&p, &sz, "PUT")) { *method = "PUT"; }
 	else if (remove_prefix_if_exists(&p, &sz, "DELETE")) { *method = "DELETE"; }
+	else if (remove_prefix_if_exists(&p, &sz, "GET"))    { *method = "GET";    }
+	else if (remove_prefix_if_exists(&p, &sz, "HEAD"))   { *method = "HEAD";   }
+	else if (remove_prefix_if_exists(&p, &sz, "POST"))   { *method = "POST";   }
+	else if (remove_prefix_if_exists(&p, &sz, "PUT"))    { *method = "PUT";    }
 	else {
 		fprintf(stderr, "Invalid request: missing method: %.4s*n", p);
 		return(0);
 	}
 
-	*url = "/";
+	++p; --sz; /* skip space */
+
+	/* TODO: Verify that we indeed found ' ' */
+	endp = memchr(p, ' ', sz);
+	*endp = 0;
+	*url = exchange(&p, endp);
+
 	*body = "";
 	*clientp = client;
 	return(1);
