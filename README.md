@@ -110,8 +110,8 @@ When all of the features of the language are implemented then I would start to m
     - [x] empty statement
     - [x] `goto`
     - [x] statement labels
-    - [ ] `switch`
-    - [ ] `case`
+    - [x] `switch`
+    - [x] `case`
     - [ ] `break`
     - [ ] `continue`
 - [x] Expressions
