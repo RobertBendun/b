@@ -140,7 +140,7 @@ http_response_begin(client, code) {
 
 http_response_content_type(f, type) extrn fprintf; fprintf(f, "Content-Type: %s*r*n", type);
 http_response_body(f, body, len) extrn fprintf; fprintf(f, "Content-Length: %llu*r*n*r*n%.**s", len, len, body);
-http_response_end(f) extrn fclose, fflush; { fflush(f); fclose(f); }
+http_response_end(f) extrn fclose; fclose(f);
 
 /* TODO: local arrays */
 timebuf[3]; /* strlen("0000-00-00 00:00:00") / 8 = 22 / 8 = 3 */
