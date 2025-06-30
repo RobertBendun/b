@@ -147,6 +147,8 @@ struct token
 		TOK_ASSIGN_DIV,
 		TOK_ASSIGN_SHIFT_LEFT,
 		TOK_ASSIGN_SHIFT_RIGHT,
+		TOK_ASSIGN_OR,
+		TOK_ASSIGN_AND,
 
 		TOK_LOGICAL_OR,
 		TOK_LOGICAL_AND,
@@ -166,20 +168,22 @@ struct {
 	{ TOK_ASSIGN_SHIFT_LEFT, "<<=" },
 	{ TOK_ASSIGN_SHIFT_RIGHT, ">>=" },
 
-	{ TOK_EQUAL, "==" },
-	{ TOK_LESS_OR_EQ, "<=" },
-	{ TOK_GREATER_OR_EQ, ">=" },
-	{ TOK_NOT_EQUAL, "!=" },
 	{ TOK_ASSIGN_ADD, "+=" },
-	{ TOK_ASSIGN_SUB, "-=" },
-	{ TOK_ASSIGN_MUL, "*=" },
+	{ TOK_ASSIGN_AND, "&=" },
 	{ TOK_ASSIGN_DIV, "/=" },
-	{ TOK_INCREMENT, "++" },
+	{ TOK_ASSIGN_MUL, "*=" },
+	{ TOK_ASSIGN_OR, "|=" },
+	{ TOK_ASSIGN_SUB, "-=" },
 	{ TOK_DECREMENT, "--" },
+	{ TOK_EQUAL, "==" },
+	{ TOK_GREATER_OR_EQ, ">=" },
+	{ TOK_INCREMENT, "++" },
+	{ TOK_LESS_OR_EQ, "<=" },
+	{ TOK_LOGICAL_AND, "&&" },
+	{ TOK_LOGICAL_OR, "||" },
+	{ TOK_NOT_EQUAL, "!=" },
 	{ TOK_SHIFT_LEFT, "<<" },
 	{ TOK_SHIFT_RIGHT, ">>" },
-	{ TOK_LOGICAL_OR, "||" },
-	{ TOK_LOGICAL_AND, "&&" },
 
 
 	{ TOK_AND, "&" },
@@ -922,6 +926,7 @@ struct binop* binary_operators[] = {
 		{TOK_ASSIGN_DIV, ASSOC_RIGHT},
 		{TOK_ASSIGN_SHIFT_LEFT, ASSOC_RIGHT},
 		{TOK_ASSIGN_SHIFT_RIGHT, ASSOC_RIGHT},
+		{TOK_ASSIGN_OR, ASSOC_RIGHT},
 		{},
 	},
 	(struct binop[]) { {TOK_QUESTION_MARK, ASSOC_RIGHT}, {} },
@@ -1006,6 +1011,7 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 	case TOK_ASSIGN_SUB:
 	case TOK_ASSIGN_SHIFT_LEFT:
 	case TOK_ASSIGN_SHIFT_RIGHT:
+	case TOK_ASSIGN_OR:
 		mov_into_reg("rax", lhsv);
 		mov_into_reg("rcx", rhsv);
 
@@ -1015,6 +1021,8 @@ void emit_op(struct compiler *compiler, struct value *result, struct value lhsv,
 		case TOK_ASSIGN_SUB: printf("\tsub rax, rcx\n"); break;
 		case TOK_ASSIGN_SHIFT_LEFT: printf("\tshl rax, cl\n"); break;
 		case TOK_ASSIGN_SHIFT_RIGHT: printf("\tshr rax, cl\n"); break;
+		case TOK_ASSIGN_OR: printf("\tor rax, rcx\n"); break;
+		case TOK_ASSIGN_AND: printf("\tand rax, rcx\n"); break;
 		case TOK_ASSIGN_DIV:
 			printf("\tcqo\n");
 			printf("\tidiv QWORD rcx\n");

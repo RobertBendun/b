@@ -1,4 +1,5 @@
 /* example work in progress */
+/* usage: examples/http [port] */
 
 /* TODO: errno isn't available due to beeing thread local */
 
@@ -6,21 +7,9 @@ AF_INET 2;
 SOCK_STREAM 1;
 SOL_SOCKET 1;
 SO_REUSEADDR 2;
+INADDR_ANY 0;
 
-/*
-TODO: Port specification (for now using bit operations I guess)
-TODO: Some support for writing to C structs
-
-Generated from C code:
-	struct sockaddr_in sin = {};
-	sin.sin_family = AF_INET;
-	sin.sin_addr.s_addr = htonl(INADDR_ANY);
-	sin.sin_port = htons(8080);
-	uint64_t *n = (void*)&sin;
-	printf("sockaddr_in %llu, %llu\n", n[0], n[1]);
-	printf("sockaddr_in_size %zu\n", sizeof(sin));
-*/
-sockaddr_in 2417950722, 0;
+sockaddr_in 0, 0;
 sockaddr_in_size 16;
 
 /* match 16 byte width of sockaddr_in */
@@ -48,8 +37,23 @@ exchange(p, new) {
 	return(old);
 }
 
-http_new() {
-	extrn socket, setsockopt, bind, listen;
+sin_family_offset 0; /* u16 */
+sin_addr_offset 4;   /* u32 */
+sin_port_offset 2;   /* u16 */
+
+u16_mask 0xffff;
+u32_mask 0xffff_ffff;
+
+/* TODO: Some support for writing to C structs */
+sockaddr_in_new(this, sin_family, sin_addr, sin_port) {
+	this[0] = this[1] = 0;
+	this[0] |= (sin_family & u16_mask) << sin_family_offset*8;
+	this[0] |= (sin_addr   & u32_mask) << sin_addr_offset*8;
+	this[0] |= (sin_port   & u16_mask) << sin_port_offset*8;
+}
+
+http_new(port) {
+	extrn socket, setsockopt, bind, listen, htonl, htons;
 	extrn printf, perror;
 	auto server, opt;
 
@@ -63,6 +67,8 @@ http_new() {
 		perror("failed to set SO_REUSEADDR");
 		return(1);
 	}
+
+	sockaddr_in_new(&sockaddr_in, AF_INET, htonl(INADDR_ANY), htons(port));
 
 	if (bind(server, &sockaddr_in, sockaddr_in_size) != 0) {
 		perror("failed to bind socket");
@@ -166,14 +172,22 @@ log_time() extrn time, localtime, strftime, printf; {
 	printf("[%s] ", timebuf);
 }
 
-main() {
+main(argc, argv) {
 	extrn close;
-	extrn strlen, printf;
-	auto server, client, method, url, body, resp;
+	extrn strlen, printf, sscanf, stderr, fprintf;
+	auto server, client, method, url, body, resp, port;
 
+	if (argc == 2) {
+		if (sscanf(argv[1], "%lld", &port) != 1) {
+			fprintf(stderr, "error reading port number. expected integer, got %s*n", argv[1]);
+			return(1);
+		}
+	} else {
+		port = 8080;
+	}
 
-	server = http_new();
-	log_time(); printf("Listening on http://localhost:8080*n");
+	server = http_new(port);
+	log_time(); printf("Listening on http://localhost:%d*n", port);
 
 	while (http_accept_request(server, &client, &method, &url, &body)) {
 		log_time(); printf("%s %s*n", method, url);
