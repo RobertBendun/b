@@ -1,4 +1,42 @@
 -----------------------------------------------------------
+Inline assembly
+-----------------------------------------------------------
+
+asm {} expressions that have Intel assembly syntax for x86_64 target (currently we don't have others)
+By convention, return value of asm {} expression is stored in rax (mirroring ABI).
+Variables can be injected using $<variable> syntax.
+This allows to create functions like below without calling.
+No labels, data definitions, function calls, just simple opcodes and adressing syntax.
+As other expressions can be used as a statement.
+
+char(p, n) return(
+	asm {
+		mov rax, $p;
+		add rax, $n;
+		mov al, [rax];
+	}
+);
+
+The one above can be collapsed to one line
+
+char(p, n) return( asm { mov rax, $p; add rax, $n; mov al, [rax]; });
+
+lchar(p, n, v) asm {
+	mov rax, $p;
+	add rax, $n;
+	mov rcx, $v;
+	mov [rax], cl;
+};
+
+Questions - do general x86_64 instruction set is planned?
+Or just instructions that are needed, and if someone needs more they can extend the compiler by themselves.
+
+Some more examples:
+
+SYS_write 1;
+write(fd, p, len) return(asm{ mov rax, $SYS_write; mov rdi, $p; mov rsi, $len; syscall; });
+
+-----------------------------------------------------------
 Constants
 -----------------------------------------------------------
 
