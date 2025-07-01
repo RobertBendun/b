@@ -313,10 +313,12 @@ struct symbol
 		EXTERNAL,
 		GLOBAL,
 		LOCAL,
+		LOCAL_VECTOR,
 	} kind;
 	char const* name;
 	size_t id;
 	size_t offset;
+	size_t size;
 };
 
 struct scope
@@ -395,17 +397,23 @@ struct compiler
 	} control;
 };
 
-size_t alloc_stack(struct compiler *compiler)
+size_t alloc_stack_sized(struct compiler *compiler, size_t size)
 {
 	if (compiler->stack_capacity == 0) {
 		compiler->stack_capacity = 16;
 	}
 
-	size_t offset = (compiler->stack_current_offset += sizeof(uint64_t));
-	if (compiler->stack_current_offset > compiler->stack_capacity) {
+	size_t offset = (compiler->stack_current_offset += sizeof(uint64_t) * size);
+	// TODO: Why we allocate in this way?
+	while (compiler->stack_current_offset > compiler->stack_capacity) {
 		compiler->stack_capacity *= 2;
 	}
 	return offset;
+}
+
+size_t alloc_stack(struct compiler *compiler)
+{
+	return alloc_stack_sized(compiler, 1);
 }
 
 void enter_scope(struct compiler *compiler)
@@ -453,6 +461,7 @@ struct symbol define_symbol(struct compiler *compiler, struct symbol symbol, str
 		errorf(name, "symbol %s has already been defined\n", name.text);
 		exit(1);
 	}
+
 	++compiler->last_symbol_id;
 	assert(compiler->last_symbol_id > 0);
 	symbol.id = compiler->last_symbol_id;
@@ -733,8 +742,38 @@ bool parse_auto(struct parser *p, struct compiler *compiler)
 			exit(1);
 		}
 
-		struct symbol s = define_symbol(compiler, (struct symbol) { .name = name.text, .kind = LOCAL, .offset = alloc_stack(compiler) }, name);
+		size_t size_to_allocate = 1;
+		enum symbol_kind kind = LOCAL;
+
+		struct token open;
+		if (expect_token(p, &open, '[')) {
+			struct token size;
+			if (!expect_token(p, &size, TOK_INTEGER)) {
+				errorf(size, "auto vector expects integer size, got %s\n", token_short_name(size));
+				exit(1);
+			}
+
+			struct token close;
+			if (!expect_token(p, &close, ']')) {
+				errorf(close, "expected ], got %s\n", token_short_name(close));
+				notef(open, "[ was opened here\n");
+				exit(1);
+			}
+
+			kind = LOCAL_VECTOR;
+			size_to_allocate = size.ival;
+		}
+
+		struct symbol s = define_symbol(compiler,
+			(struct symbol) {
+				.name = name.text,
+				.kind = kind,
+				.offset = alloc_stack_sized(compiler, size_to_allocate),
+				.size = size_to_allocate
+			},
+			name);
 		printf("\t; auto [rbp-%zu] = %s\n", s.offset, name.text);
+
 
 		struct token semicolon, comma;
 		if (expect_token(p, &semicolon, TOK_SEMICOLON)) {
@@ -852,6 +891,7 @@ bool parse_funccall(struct parser *p, struct compiler *compiler, struct value *r
 		case EXTERNAL: printf("\tcall %s WRT ..plt\n", symbol->name); break;
 		case GLOBAL: printf("\tcall sym_%zu\n", symbol->id); break;
 		case LOCAL: printf("\tlea r10, QWORD [rbp-%zu]\n\tcall r10\n", symbol->offset); break;
+		NOT_IMPLEMENTED_FOR(LOCAL_VECTOR);
 	}
 
 	result->kind = RVALUE;
@@ -1276,6 +1316,12 @@ bool parse_atomic(struct parser *p, struct compiler *compiler, struct value *lhs
 	switch (symbol->kind) {
 	case LOCAL:
 		// TODO: Move handling from parse_name
+		return true;
+
+	case LOCAL_VECTOR:
+		*lhs = (struct value) { .kind = RVALUE, .offset = alloc_stack(compiler) };
+		printf("\tlea rax, [rbp-%zu]\n", symbol->offset);
+		printf("\tmov [rbp-%zu], rax\n", lhs->offset);
 		return true;
 
 	case GLOBAL:

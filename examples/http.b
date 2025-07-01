@@ -160,15 +160,11 @@ http_response_content_type(f, type) extrn fprintf; fprintf(f, "Content-Type: %s*
 http_response_body(f, body, len) extrn fprintf; fprintf(f, "Content-Length: %llu*r*n*r*n%.**s", len, len, body);
 http_response_end(f) extrn fclose; fclose(f);
 
-/* TODO: local arrays */
-timebuf[3]; /* strlen("0000-00-00 00:00:00") / 8 = 22 / 8 = 3 */
-timebuf_size 24;
-
 log_time() extrn time, localtime, strftime, printf; {
-	auto t, tm;
+	auto t, tm, timebuf[3]; /* strlen("0000-00-00 00:00:00") / 8 = 22 / 8 = 3 */
 	t = time(0);
 	tm = localtime(&t);
-	strftime(timebuf, timebuf_size, "%Y-%m-%d %H:%M:%S", tm);
+	strftime(timebuf, 3 * &0[1], "%Y-%m-%d %H:%M:%S", tm);
 	printf("[%s] ", timebuf);
 }
 
