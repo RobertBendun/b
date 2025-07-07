@@ -9,15 +9,9 @@ SOL_SOCKET 1;
 SO_REUSEADDR 2;
 INADDR_ANY 0;
 
-sockaddr_in 0, 0;
 sockaddr_in_size 16;
 
-/* match 16 byte width of sockaddr_in */
-client_sockaddr 0, 0;
-
 /* TODO: Mechanism for constants */
-buf[128];
-bufsize 1024; /* 128 * wordsize = 128 * 8 = 1024 */
 
 page "<!DOCTYPE html>
 <html>
@@ -29,6 +23,30 @@ page "<!DOCTYPE html>
 		<h1>Hello from B</h1>
 	</body>
 </html>";
+
+page404 "<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset=*"utf-8*">
+		<title>Not Found</title>
+	</head>
+	<body>
+		<h1>Page Not Found</h1>
+	</body>
+</html>";
+
+page405 "<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset=*"utf-8*">
+		<title>Method Not Allowed</title>
+	</head>
+	<body>
+		<h1>Method Not Allowed</h1>
+	</body>
+</html>";
+
+
 
 exchange(p, new) {
 	auto old;
@@ -55,7 +73,7 @@ sockaddr_in_new(this, sin_family, sin_addr, sin_port) {
 http_new(port) {
 	extrn socket, setsockopt, bind, listen, htonl, htons;
 	extrn printf, perror;
-	auto server, opt;
+	auto server, opt, sockaddr_in[2];
 
 	server = socket(AF_INET, SOCK_STREAM, 0);
 	if (!server) {
@@ -68,9 +86,9 @@ http_new(port) {
 		return(1);
 	}
 
-	sockaddr_in_new(&sockaddr_in, AF_INET, htonl(INADDR_ANY), htons(port));
+	sockaddr_in_new(sockaddr_in, AF_INET, htonl(INADDR_ANY), htons(port));
 
-	if (bind(server, &sockaddr_in, sockaddr_in_size) != 0) {
+	if (bind(server, sockaddr_in, sockaddr_in_size) != 0) {
 		perror("failed to bind socket");
 		return(1);
 	}
@@ -96,8 +114,10 @@ remove_prefix_if_exists(s, len, prefix) extrn strncmp, strlen; {
 
 http_accept_request(server, clientp, method, url, body) {
 	/* posix */ extrn accept, read;
-	/* libc  */ extrn strstr, perror, strncmp, fprintf, stderr, memchr;
-	auto client;
+	/* libc  */ extrn strstr, perror, strncmp, fprintf, stderr, memchr, printf;
+	/* libb  */ extrn i8set;
+	auto client, bufsize, buf[128];
+	bufsize = 128 * &0[1];
 
 	if ((client = accept(server, 0, 0)) < 0) return(0);
 
@@ -129,9 +149,9 @@ http_accept_request(server, clientp, method, url, body) {
 
 	/* TODO: Verify that we indeed found ' ' */
 	endp = memchr(p, ' ', sz);
-	*endp = 0;
-	*url = exchange(&p, endp);
+	i8set(endp, 0);
 
+	*url = exchange(&p, endp);
 	*body = "";
 	*clientp = client;
 	return(1);
@@ -142,6 +162,8 @@ http_status_code_to_message(code) {
 
 	switch (code) {
 	case 200: return("OK");
+	case 404: return("Not Found");
+	case 405: return("Method Not Allowed");
 	}
 
 	fprintf(stderr, "ERROR: unknown error message code: %d*n", code);
@@ -170,7 +192,7 @@ log_time() extrn time, localtime, strftime, printf; {
 
 main(argc, argv) {
 	extrn close;
-	extrn strlen, printf, sscanf, stderr, fprintf;
+	extrn strlen, strcmp, printf, sscanf, stderr, fprintf;
 	auto server, client, method, url, body, resp, port;
 
 	if (argc == 2) {
@@ -188,9 +210,24 @@ main(argc, argv) {
 	while (http_accept_request(server, &client, &method, &url, &body)) {
 		log_time(); printf("%s %s*n", method, url);
 
-		resp = http_response_begin(client, 200);
+		if (strcmp(method, "GET") == 0) {
+			if (strcmp(url, "/") == 0 || strcmp(url, "/index.html") == 0) {
+				resp = http_response_begin(client, 200);
+				http_response_content_type(resp, "text/html; charset=utf-8");
+				http_response_body(resp, page, strlen(page));
+				http_response_end(resp);
+				continue;
+			}
+			resp = http_response_begin(client, 404);
+			http_response_content_type(resp, "text/html; charset=utf-8");
+			http_response_body(resp, page404, strlen(page404));
+			http_response_end(resp);
+			continue;
+		}
+
+		resp = http_response_begin(client, 405);
 		http_response_content_type(resp, "text/html; charset=utf-8");
-		http_response_body(resp, page, strlen(page));
+		http_response_body(resp, page405, strlen(page405));
 		http_response_end(resp);
 	}
 

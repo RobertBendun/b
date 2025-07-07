@@ -22,8 +22,11 @@ examples/%.asm: examples/%.b b
 examples/%.o: examples/%.asm
 	nasm $< -felf64 -o $@
 
-examples/%: examples/%.o
-	$(CC) $< -o $@
+libb.o: libb.c
+	$(CC) -c $< -o $@
+
+examples/%: examples/%.o libb.o
+	$(CC) $< libb.o -o $@
 
 examples/opt/%.asm: examples/opt/%.b b
 	./b <$< >$@
