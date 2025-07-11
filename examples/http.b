@@ -213,17 +213,64 @@ log_time() extrn time, localtime, strftime, printf; {
 	printf("[%s] ", timebuf);
 }
 
+dirent_size 280; /* 35 words */
+dirent_d_type_offset 18; /* 1 bytes */
+dirent_d_name_offset 19;
+
+append(x, y)
+	extrn strlen, calloc, realloc, strdup, strcat;
+	return (x ? strcat(realloc(x, strlen(x) + strlen(y) + 1), y) : strdup(y));
+
+
+/* TODO: sorted output */
+directory_response(fd, client, url) {
+	extrn close;
+	extrn fdopendir, closedir, readdir, printf, strlen;
+	auto dir, dirent, out, resp;
+
+	dir = fdopendir(fd);
+
+	out = 0;
+	out = append(out, "<!DOCTYPE html><html><head><meta charset=*"utf-8*"><title>");
+	out = append(out, url);
+	out = append(out, "</title></head><body><ul>");
+
+
+	while (dirent = readdir(dir)) {
+		out = append(out, "<li><a href=*"");
+		out = append(out, url);
+		out = append(out, "/");
+		out = append(out, dirent + dirent_d_name_offset);
+		out = append(out, "*">");
+		out = append(out, dirent + dirent_d_name_offset);
+		out = append(out, "</a></li>");
+	}
+	out = append(out, "</ul></body></html>");
+
+	resp = http_response_begin(client, 404);
+	http_response_content_type(resp, "text/html; charset=utf-8");
+	http_response_body(resp, out, strlen(out));
+	http_response_end(resp);
+
+	closedir(dir);
+}
+
 statbuf[18];
 copybuf[128];
 try_file_response(client, url) {
 	/* posix */ extrn open, fstat, write;
-	/* libc  */ extrn printf, strlen, perror, fdopen, fprintf, fread, fwrite, fclose, fflush;
+	/* libc  */ extrn printf, strlen, perror, fdopen, fprintf, fread, fwrite, fclose, fflush, malloc, strcat, strcmp;
+	/* libb  */ extrn i8set;
 	auto resp, fd, size, read, p; /* 144 / 8 = 18 */
 
-	/* TODO: test if the slash exists to be skipped */
-	url += 1;
 
-	if ((fd = open(url, O_RDONLY)) < 0) {
+	p = malloc(strlen(url) + 2);
+	i8set(p+0, '.');
+	i8set(p+1, 0);
+	url = strcat(p, url);
+
+
+	if ((fd = open(p, O_RDONLY)) < 0) {
 		return(0);
 	}
 
@@ -232,12 +279,13 @@ try_file_response(client, url) {
 		return(0);
 	}
 
+	printf(" -> 200 %s*n", http_status_code_to_message(200));
+
 	if (S_ISDIR(statbuf)) {
-		/* TODO: directories are not implemented yet */
-		return(0);
+		directory_response(fd, client, url);
+		return(1);
 	}
 
-	printf(" -> 200 %s*n", http_status_code_to_message(200));
 	resp = http_response_begin(client, 200);
 	/* TODO: Detect file type */
 	http_response_content_type(resp, "text/plain");
@@ -294,10 +342,6 @@ main(argc, argv) {
 		log_time(); printf("%s %s", method, url);
 
 		if (strcmp(method, "GET") == 0) {
-			if (strcmp(url, "/") == 0) {
-				url = "/index.html";
-			}
-
 			if (try_file_response(client, url)) {
 				continue;
 			}
