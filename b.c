@@ -772,7 +772,7 @@ bool parse_auto(struct parser *p, struct compiler *compiler)
 				.size = size_to_allocate
 			},
 			name);
-		printf("\t; auto [rbp-%zu] = %s\n", s.offset, name.text);
+		printf("\t; auto [rbp-%zu] = %s (sized %zu)\n", s.offset, name.text, size_to_allocate);
 
 
 		struct token semicolon, comma;

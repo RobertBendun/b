@@ -8,8 +8,32 @@ SOCK_STREAM 1;
 SOL_SOCKET 1;
 SO_REUSEADDR 2;
 INADDR_ANY 0;
+O_RDONLY 0;
+
+S_IFMT     0170000; /* mask to extract file mode bits */
+S_IFSOCK   0140000; /* socket */
+S_IFLNK    0120000; /* symbolic link */
+S_IFREG    0100000; /* regular file */
+S_IFBLK    0060000; /* block device */
+S_IFDIR    0040000; /* directory */
+S_IFCHR    0020000; /* character device */
+S_IFIFO    0010000; /* FIFO */
+
 
 sockaddr_in_size 16;
+
+sin_family_offset 0; /* u16 */
+sin_addr_offset 4;   /* u32 */
+sin_port_offset 2;   /* u16 */
+
+stat_size 144;
+stat_st_mode_offset 24; /* u32 */
+stat_st_size_offset 48; /* u64 */
+
+/* for pointer to struct stat return if it's a particular type */
+S_ISDIR(stat) extrn u32; return((u32(stat+stat_st_mode_offset) & S_IFMT) == S_IFDIR);
+
+stat_st_size(stat) return(*(stat+stat_st_size_offset));
 
 /* TODO: Mechanism for constants */
 
@@ -55,10 +79,6 @@ exchange(p, new) {
 	return(old);
 }
 
-sin_family_offset 0; /* u16 */
-sin_addr_offset 4;   /* u32 */
-sin_port_offset 2;   /* u16 */
-
 u16_mask 0xffff;
 u32_mask 0xffff_ffff;
 
@@ -81,6 +101,7 @@ http_new(port) {
 		return(1);
 	}
 
+	opt = 1;
 	if (setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &opt, &0[1]) != 0) {
 		perror("failed to set SO_REUSEADDR");
 		return(1);
@@ -112,17 +133,20 @@ remove_prefix_if_exists(s, len, prefix) extrn strncmp, strlen; {
 	return(0);
 }
 
+buf[128];
+
 http_accept_request(server, clientp, method, url, body) {
 	/* posix */ extrn accept, read;
-	/* libc  */ extrn strstr, perror, strncmp, fprintf, stderr, memchr, printf;
+	/* libc  */ extrn strstr, perror, strncmp, fprintf, stderr, memchr, memset, printf;
 	/* libb  */ extrn i8set;
-	auto client, bufsize, buf[128];
-	bufsize = 128 * &0[1];
+	auto client, bufsize;
+	bufsize = 128 * 8;
 
 	if ((client = accept(server, 0, 0)) < 0) return(0);
 
 	auto r, p, sz, endp;
 
+	memset(buf, 0, bufsize);
 	r = read(client, buf, bufsize - 1);
 	if (r < 0) {
 		perror("failed to read");
@@ -147,8 +171,7 @@ http_accept_request(server, clientp, method, url, body) {
 
 	++p; --sz; /* skip space */
 
-	/* TODO: Verify that we indeed found ' ' */
-	endp = memchr(p, ' ', sz);
+	if (!(endp = memchr(p, ' ', sz))) return(0);
 	i8set(endp, 0);
 
 	*url = exchange(&p, endp);
@@ -190,6 +213,65 @@ log_time() extrn time, localtime, strftime, printf; {
 	printf("[%s] ", timebuf);
 }
 
+statbuf[18];
+copybuf[128];
+try_file_response(client, url) {
+	/* posix */ extrn open, fstat, write;
+	/* libc  */ extrn printf, strlen, perror, fdopen, fprintf, fread, fwrite, fclose, fflush;
+	auto resp, fd, size, read, p; /* 144 / 8 = 18 */
+
+	/* TODO: test if the slash exists to be skipped */
+	url += 1;
+
+	if ((fd = open(url, O_RDONLY)) < 0) {
+		return(0);
+	}
+
+	if (fstat(fd, statbuf) < 0) {
+		perror("fstat");
+		return(0);
+	}
+
+	if (S_ISDIR(statbuf)) {
+		/* TODO: directories are not implemented yet */
+		return(0);
+	}
+
+	printf(" -> 200 %s*n", http_status_code_to_message(200));
+	resp = http_response_begin(client, 200);
+	/* TODO: Detect file type */
+	http_response_content_type(resp, "text/plain");
+
+	fd = fdopen(fd, "r");
+	if (!fd) {
+		perror("failed to reopen file");
+		return(1);
+	}
+	size = stat_st_size(statbuf);
+	fprintf(resp, "Content-Length: %llu*r*n*r*n", size);
+
+	while (size > 0) {
+		if ((read = fread(copybuf, 1, 128 * &0[1], fd)) <= 0) {
+			perror("fread");
+			fclose(fd);
+			http_response_end(resp);
+			return(1);
+		}
+		/* TODO: verify that we indeed written */
+		if (read > 0 && !fwrite(copybuf, 1, read, resp)) {
+			perror("fwrite");
+			fclose(fd);
+			http_response_end(resp);
+			return(1);
+		}
+		size -= read;
+	}
+
+	fclose(fd);
+	http_response_end(resp);
+	return(1);
+}
+
 main(argc, argv) {
 	extrn close;
 	extrn strlen, strcmp, printf, sscanf, stderr, fprintf;
@@ -207,17 +289,20 @@ main(argc, argv) {
 	server = http_new(port);
 	log_time(); printf("Listening on http://localhost:%d*n", port);
 
+	client = method = url = body = 0;
 	while (http_accept_request(server, &client, &method, &url, &body)) {
-		log_time(); printf("%s %s*n", method, url);
+		log_time(); printf("%s %s", method, url);
 
 		if (strcmp(method, "GET") == 0) {
-			if (strcmp(url, "/") == 0 || strcmp(url, "/index.html") == 0) {
-				resp = http_response_begin(client, 200);
-				http_response_content_type(resp, "text/html; charset=utf-8");
-				http_response_body(resp, page, strlen(page));
-				http_response_end(resp);
+			if (strcmp(url, "/") == 0) {
+				url = "/index.html";
+			}
+
+			if (try_file_response(client, url)) {
 				continue;
 			}
+
+			printf(" -> 404 %s*n", http_status_code_to_message(404));
 			resp = http_response_begin(client, 404);
 			http_response_content_type(resp, "text/html; charset=utf-8");
 			http_response_body(resp, page404, strlen(page404));
@@ -225,6 +310,7 @@ main(argc, argv) {
 			continue;
 		}
 
+		printf(" -> 405 %s*n", http_status_code_to_message(405));
 		resp = http_response_begin(client, 405);
 		http_response_content_type(resp, "text/html; charset=utf-8");
 		http_response_body(resp, page405, strlen(page405));
