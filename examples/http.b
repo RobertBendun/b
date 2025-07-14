@@ -37,17 +37,6 @@ stat_st_size(stat) return(*(stat+stat_st_size_offset));
 
 /* TODO: Mechanism for constants */
 
-page "<!DOCTYPE html>
-<html>
-	<head>
-		<meta charset=*"utf-8*">
-		<title>Hello from B</title>
-	</head>
-	<body>
-		<h1>Hello from B</h1>
-	</body>
-</html>";
-
 page404 "<!DOCTYPE html>
 <html>
 	<head>
@@ -92,7 +81,7 @@ sockaddr_in_new(this, sin_family, sin_addr, sin_port) {
 
 http_new(port) {
 	extrn socket, setsockopt, bind, listen, htonl, htons;
-	extrn printf, perror;
+	extrn perror;
 	auto server, opt, sockaddr_in[2];
 
 	server = socket(AF_INET, SOCK_STREAM, 0);
@@ -122,8 +111,6 @@ http_new(port) {
 	return(server);
 }
 
-min(a, b) return(a < b ? a : b);
-
 remove_prefix_if_exists(s, len, prefix) extrn strncmp, strlen; {
 	if (*len >= strlen(prefix) && strncmp(*s, prefix, strlen(prefix)) == 0) {
 		*s += strlen(prefix);
@@ -137,7 +124,7 @@ buf[128];
 
 http_accept_request(server, clientp, method, url, body) {
 	/* posix */ extrn accept, read;
-	/* libc  */ extrn strstr, perror, strncmp, fprintf, stderr, memchr, memset, printf;
+	/* libc  */ extrn perror, fprintf, stderr, memchr, memset;
 	/* libb  */ extrn i8set;
 	auto client, bufsize;
 	bufsize = 128 * 8;
@@ -218,14 +205,13 @@ dirent_d_type_offset 18; /* 1 bytes */
 dirent_d_name_offset 19;
 
 append(x, y)
-	extrn strlen, calloc, realloc, strdup, strcat;
+	extrn strlen, realloc, strdup, strcat;
 	return (x ? strcat(realloc(x, strlen(x) + strlen(y) + 1), y) : strdup(y));
 
 
 /* TODO: sorted output */
 directory_response(fd, client, url) {
-	extrn close;
-	extrn fdopendir, closedir, readdir, printf, strlen, free;
+	extrn fdopendir, closedir, readdir, strlen, free;
 	auto dir, dirent, out, resp;
 
 	dir = fdopendir(fd);
@@ -257,8 +243,8 @@ directory_response(fd, client, url) {
 
 statbuf[18];
 try_file_response(client, url) {
-	/* posix */ extrn open, fstat, write, close, sendfile;
-	/* libc  */ extrn printf, strlen, perror, fdopen, fprintf, fread, fwrite, fclose, fflush, malloc, strcat, strcmp;
+	/* posix */ extrn open, fstat, close, sendfile;
+	/* libc  */ extrn printf, strlen, perror, fprintf, fflush, malloc, strcat;
 	/* libb  */ extrn i8set;
 	auto resp, fd, size, read, p; /* 144 / 8 = 18 */
 

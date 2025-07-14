@@ -1,12 +1,12 @@
 #include <assert.h>
 #include <ctype.h>
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
 
 
 #define NOT_IMPLEMENTED_FOR(VALUE) \
@@ -502,7 +502,7 @@ bool parse_statement(struct parser *p, struct compiler *compiler);
 
 void print_help(FILE *out)
 {
-	fprintf(out, "usage: b [-h] [-w] [input_file]\n");
+	fprintf(out, "usage: b [-h] [-w] [-o output_file] [input_file]\n");
 	fprintf(out, "   -w / --warning / --warnings     Prints warnings"); // TODO: Match gcc syntax
 }
 
@@ -513,6 +513,7 @@ int main(int argc, char **argv)
 	(void)/* program name */shift(argv, argc);
 
 	FILE *input_stream = NULL;
+	char const* output_filename = NULL;
 
 	for (char const *arg; (arg = shift(argv, argc));) {
 		if (arg && *arg == '-') {
@@ -523,6 +524,15 @@ int main(int argc, char **argv)
 
 			if (strcmp("-w", arg) == 0 || strcmp("--warning", arg) == 0 || strcmp("--warnings", arg) == 0) {
 				warnings_enabled = true;
+				continue;
+			}
+
+			if (strcmp("-o", arg) == 0 || strcmp("--output", arg) == 0) {
+				output_filename = shift(argv, argc);
+				if (!output_filename) {
+					fprintf(stderr, "b: error: expected output filename\n");
+					return 1;
+				}
 				continue;
 			}
 
@@ -546,6 +556,13 @@ int main(int argc, char **argv)
 		}
 	} else {
 		input_stream = stdin;
+	}
+
+	if (output_filename) {
+		if (!freopen(output_filename, "w", stdout)) {
+			perror("b: error:");
+			return 1;
+		}
 	}
 
 	struct compiler compiler = {
