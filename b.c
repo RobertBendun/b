@@ -249,6 +249,8 @@ char const* token_short_name(struct token tok)
 }
 
 static char const* source = NULL;
+static bool warnings_enabled = false;
+static char const* current_filename = NULL;
 
 void dump_location(FILE *out, struct token tok)
 {
@@ -265,7 +267,7 @@ void dump_location(FILE *out, struct token tok)
 		column++;
 	} while (*++p && p != tok.p);
 
-	fprintf(out, "%s:%zu:%zu: ", "(stdin)", line, column);
+	fprintf(out, "%s:%zu:%zu: ", current_filename, line, column);
 }
 
 __attribute__ ((format (printf, 2, 3)))
@@ -273,6 +275,20 @@ void errorf(struct token tok, char const* fmt, ...)
 {
 	dump_location(stderr, tok);
 	fprintf(stderr, "error: ");
+	va_list args;
+	va_start(args, fmt);
+	vfprintf(stderr, fmt, args);
+	va_end(args);
+}
+
+
+__attribute__ ((format (printf, 2, 3)))
+void warnf(struct token tok, char const* fmt, ...)
+{
+	if (!warnings_enabled) return;
+
+	dump_location(stderr, tok);
+	fprintf(stderr, "warning: ");
 	va_list args;
 	va_start(args, fmt);
 	vfprintf(stderr, fmt, args);
@@ -319,6 +335,9 @@ struct symbol
 	size_t id;
 	size_t offset;
 	size_t size;
+	struct token definition;
+
+	bool used;
 };
 
 struct scope
@@ -426,8 +445,17 @@ void enter_scope(struct compiler *compiler)
 
 void leave_scope(struct compiler *compiler)
 {
-	assert(compiler->nesting > 0 && "Trying to leave when in global scope");
+	// TODO: this should be uncommented, see todo in main
+	// assert(compiler->nesting > 0 && "trying to leave global scope");
 	compiler->stack_current_offset = compiler->scope[compiler->nesting].stack_offset;
+
+	struct scope scope = compiler->scope[compiler->nesting];
+	for (size_t i = 0; i < scope.count; ++i) {
+		if ((compiler->nesting == 0 && strcmp(scope.items[i].name, "main") == 0) || scope.items[i].used)
+			continue;
+		warnf(scope.items[i].definition, "symbol %s is not used\n", scope.items[i].name);
+	}
+
 	--compiler->nesting;
 }
 
@@ -472,8 +500,54 @@ struct symbol define_symbol(struct compiler *compiler, struct symbol symbol, str
 void parse_program(struct parser *p, struct compiler *compiler);
 bool parse_statement(struct parser *p, struct compiler *compiler);
 
-int main()
+void print_help(FILE *out)
 {
+	fprintf(out, "usage: b [-h] [-w] [input_file]\n");
+	fprintf(out, "   -w / --warning / --warnings     Prints warnings"); // TODO: Match gcc syntax
+}
+
+#define shift(argv, argc) (argc-- <= 0 ? NULL : *(argv++))
+
+int main(int argc, char **argv)
+{
+	(void)/* program name */shift(argv, argc);
+
+	FILE *input_stream = NULL;
+
+	for (char const *arg; (arg = shift(argv, argc));) {
+		if (arg && *arg == '-') {
+			if (strcmp("-h", arg) == 0 || strcmp("--help", arg) == 0) {
+				print_help(stdout);
+				return 0;
+			}
+
+			if (strcmp("-w", arg) == 0 || strcmp("--warning", arg) == 0 || strcmp("--warnings", arg) == 0) {
+				warnings_enabled = true;
+				continue;
+			}
+
+			fprintf(stderr, "b: error: unknown option: %s\n", arg);
+			return 1;
+		}
+
+		if (current_filename == NULL) {
+			current_filename = arg;
+		} else {
+			fprintf(stderr, "b: error: file was already provided: %s\n", current_filename);
+			return 1;
+		}
+	}
+
+	if (current_filename) {
+		input_stream = fopen(current_filename, "r");
+		if (!input_stream) {
+			perror("b: error:");
+			return 1;
+		}
+	} else {
+		input_stream = stdin;
+	}
+
 	struct compiler compiler = {
 		.stack_current_offset = 8,
 	};
@@ -484,7 +558,7 @@ int main()
 
 	for (;;) {
 		char buf[4096];
-		size_t read = fread(&buf, 1, sizeof(buf), stdin);
+		size_t read = fread(&buf, 1, sizeof(buf), input_stream);
 		if (read == 0) {
 			break;
 		}
@@ -576,6 +650,9 @@ int main()
 		}
 		printf("\nstrend:\n");
 	}
+
+	// TODO: better solution to presever assert
+	leave_scope(&compiler);
 
 #endif
 }
@@ -700,7 +777,7 @@ bool parse_extern(struct parser *p, struct compiler *compiler)
 			exit(1);
 		}
 
-		define_symbol(compiler, (struct symbol) { .name = name.text, .kind = EXTERNAL }, name);
+		define_symbol(compiler, (struct symbol) { .name = name.text, .kind = EXTERNAL, .definition = name }, name);
 
 		bool found = false;
 		for (size_t i = 0; i < compiler->defined_externs.count; ++i) {
@@ -769,7 +846,8 @@ bool parse_auto(struct parser *p, struct compiler *compiler)
 				.name = name.text,
 				.kind = kind,
 				.offset = alloc_stack_sized(compiler, size_to_allocate),
-				.size = size_to_allocate
+				.size = size_to_allocate,
+				.definition = name,
 			},
 			name);
 		printf("\t; auto [rbp-%zu] = %s (sized %zu)\n", s.offset, name.text, size_to_allocate);
@@ -912,6 +990,8 @@ bool parse_name(struct parser *p, struct compiler *compiler, struct symbol **sym
 		errorf(name, "'%s' has not been defined yet\n", name.text);
 		exit(1);
 	}
+	// TODO: Better usage analysis
+	(*symbol)->used = true;
 	// TODO: This only works for local names, other kinds of symbols are loaded differently
 	if ((*symbol)->kind == LOCAL) {
 		lhs->kind = LVALUE_AUTO;
@@ -1940,7 +2020,7 @@ bool parse_function_definition(struct parser *p, struct compiler *compiler, stru
 	assert(compiler->nesting == 0);
 	compiler->function_labels.count = 0;
 
-	struct symbol fun = define_symbol(compiler, ((struct symbol) { .kind = GLOBAL, .name = name.text }), name);
+	struct symbol fun = define_symbol(compiler, ((struct symbol) { .kind = GLOBAL, .name = name.text, .definition = name }), name);
 
 	// TODO:
 
@@ -1980,7 +2060,9 @@ bool parse_function_definition(struct parser *p, struct compiler *compiler, stru
 		struct symbol arg_sym = define_symbol(compiler, ((struct symbol) {
 			.kind = LOCAL,
 			.name = arg.text,
-			.offset = alloc_stack(compiler) }),
+			.offset = alloc_stack(compiler),
+			.definition = arg,
+			}),
 			arg);
 		printf("\tmov [rbp-%zu], %s\n", arg_sym.offset, ABI_REGISTERS[i]);
 	}
@@ -2057,7 +2139,7 @@ bool parse_global_variable_definition(struct parser *p, struct compiler *compile
 		data.declared_size = size;
 	}
 
-	data.id = define_symbol(compiler, (struct symbol) { .kind = GLOBAL, .name = name.text }, name).id;
+	data.id = define_symbol(compiler, (struct symbol) { .kind = GLOBAL, .name = name.text, .definition = name }, name).id;
 	parse_definition_value_list(p, compiler, &data);
 	da_append(&compiler->data_section, data);
 
