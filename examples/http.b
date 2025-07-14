@@ -225,7 +225,7 @@ append(x, y)
 /* TODO: sorted output */
 directory_response(fd, client, url) {
 	extrn close;
-	extrn fdopendir, closedir, readdir, printf, strlen;
+	extrn fdopendir, closedir, readdir, printf, strlen, free;
 	auto dir, dirent, out, resp;
 
 	dir = fdopendir(fd);
@@ -251,14 +251,13 @@ directory_response(fd, client, url) {
 	http_response_content_type(resp, "text/html; charset=utf-8");
 	http_response_body(resp, out, strlen(out));
 	http_response_end(resp);
-
+	free(out);
 	closedir(dir);
 }
 
 statbuf[18];
-copybuf[128];
 try_file_response(client, url) {
-	/* posix */ extrn open, fstat, write;
+	/* posix */ extrn open, fstat, write, close, sendfile;
 	/* libc  */ extrn printf, strlen, perror, fdopen, fprintf, fread, fwrite, fclose, fflush, malloc, strcat, strcmp;
 	/* libb  */ extrn i8set;
 	auto resp, fd, size, read, p; /* 144 / 8 = 18 */
@@ -290,32 +289,21 @@ try_file_response(client, url) {
 	/* TODO: Detect file type */
 	http_response_content_type(resp, "text/plain");
 
-	fd = fdopen(fd, "r");
-	if (!fd) {
-		perror("failed to reopen file");
-		return(1);
-	}
 	size = stat_st_size(statbuf);
 	fprintf(resp, "Content-Length: %llu*r*n*r*n", size);
 
+
+	fflush(resp);
 	while (size > 0) {
-		if ((read = fread(copybuf, 1, 128 * &0[1], fd)) <= 0) {
-			perror("fread");
-			fclose(fd);
-			http_response_end(resp);
-			return(1);
-		}
-		/* TODO: verify that we indeed written */
-		if (read > 0 && !fwrite(copybuf, 1, read, resp)) {
-			perror("fwrite");
-			fclose(fd);
-			http_response_end(resp);
-			return(1);
+		read = sendfile(client, fd, 0, size);
+		if (read < 0) {
+			perror("sendfile");
+			break;
 		}
 		size -= read;
 	}
 
-	fclose(fd);
+	close(fd);
 	http_response_end(resp);
 	return(1);
 }
