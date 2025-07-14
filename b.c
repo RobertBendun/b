@@ -556,6 +556,7 @@ int main(int argc, char **argv)
 		}
 	} else {
 		input_stream = stdin;
+		current_filename = "(stdin)";
 	}
 
 	if (output_filename) {
