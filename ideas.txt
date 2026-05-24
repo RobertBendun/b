@@ -1,4 +1,24 @@
 -----------------------------------------------------------
+Word adressing vs byte addressing
+-----------------------------------------------------------
+
+I would suggest that traditional index operator should be treated as byte index operator.
+Similarly vector declaration should be treated as vector declaration.
+
+. operator can be used for word index operator.
+For example:
+
+person_name 0;
+person_age 1;
+person_sizeof 2;
+
+auto alice.person_sizeof;
+
+alice.person_name = "alice"
+alice.person_age = 30;
+alice.person_name[0] = to_upper(alice.person_name[0]); /* ensure that first letter is uppercase */
+
+-----------------------------------------------------------
 Inline assembly
 -----------------------------------------------------------
 
@@ -198,25 +218,6 @@ STDOUT_FILENO 1;
 main() {
 	syscall(SYS_write, STDOUT_FILENO, "hello, world\n", 13);
 }
-
------------------------------------------------------------
-Word addressing vs byte addressing
------------------------------------------------------------
-
-So dereference and pointer arithmetic in B would operatre on bytes by default.
-I would see some functions that would either get or set specific bit lengths:
-
-i8(p) returns 8 bit signed int at p, extended to the word (respects signed bit)
-i8(p, v) writes 8 bit signed int at p, respecting sign
-u8(p), u8(p, v) same for unsigned 8 bit
-
-and similarly for i16, i32, i64, u8, u16, u32, u64 (64 versions for completness)
-
-this pattern allows us to also define floating point functions, they would do standard to integer rounding like in C when converting from float to int: f16, f32, f64, f80, f128
-
-What shoul be considered is that this solution doesn't allow for passing float values via function calls
-it may be separate or shared issue depending on the path the language takes
-
 
 -----------------------------------------------------------
 Anonymous functions

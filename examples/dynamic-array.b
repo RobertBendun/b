@@ -1,7 +1,8 @@
+/* Is this the general solution for data structures in B? */
 da_items     0;
 da_count     1;
 da_capacity  2;
-da_sizeof 3;
+da_sizeof    3;
 
 da_init(da) da[da_items] = da[da_capacity] = da[da_count] = 0;
 da_deinit(da) extrn free; free(da[da_items]);
