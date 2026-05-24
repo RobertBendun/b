@@ -2175,13 +2175,16 @@ bool parse_global_variable_definition(struct parser *p, struct compiler *compile
 	parse_definition_value_list(p, compiler, &data);
 
 	struct symbol sym = { .kind = GLOBAL, .name = name.text, .definition = name };
+
+	// Vector global definitions aren't known at compile time since they are addresses
 	if (!data.is_vec) {
-		if (data.count > 0) {
-			sym.compile_time_known_value = data.items[0];
-		} else {
-			errorf(name, "not implemented yet");
-			exit(1);
-		}
+		sym.compile_time_known_value = data.count > 0
+			? data.items[0]
+			: (struct token) {
+				.kind = TOK_INTEGER,
+				.ival = 0,
+				.p = name.p,
+		};
 	}
 
 	data.id = define_symbol(compiler, sym, name).id;
