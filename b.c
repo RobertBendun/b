@@ -337,6 +337,9 @@ struct symbol
 	size_t size;
 	struct token definition;
 
+	/* TOK_EOF on lack of comptime known value */
+	struct token compile_time_known_value;
+
 	bool used;
 };
 
@@ -843,9 +846,22 @@ bool parse_auto(struct parser *p, struct compiler *compiler)
 		struct token open;
 		if (expect_token(p, &open, '[')) {
 			struct token size;
-			if (!expect_token(p, &size, TOK_INTEGER)) {
+			if (!expect_token(p, &size, TOK_INTEGER) && !expect_token(p, &size, TOK_IDENTIFIER)) {
 				errorf(size, "auto vector expects integer size, got %s\n", token_short_name(size));
 				exit(1);
+			}
+
+			if (size.kind == TOK_IDENTIFIER) {
+				struct symbol *symbol = search_symbol(compiler, size.text);
+				if (!symbol) {
+					errorf(size, "'%s' has not been defined yet\n", name.text);
+					exit(1);
+				}
+				if (symbol->compile_time_known_value.kind != TOK_INTEGER) {
+					errorf(size, "autovector size must be know at compile time, got %s\n", token_short_name(symbol->compile_time_known_value));
+					exit(1);
+				}
+				size = symbol->compile_time_known_value;
 			}
 
 			struct token close;
@@ -2156,9 +2172,19 @@ bool parse_global_variable_definition(struct parser *p, struct compiler *compile
 		data.is_vec = true;
 		data.declared_size = size;
 	}
-
-	data.id = define_symbol(compiler, (struct symbol) { .kind = GLOBAL, .name = name.text, .definition = name }, name).id;
 	parse_definition_value_list(p, compiler, &data);
+
+	struct symbol sym = { .kind = GLOBAL, .name = name.text, .definition = name };
+	if (!data.is_vec) {
+		if (data.count > 0) {
+			sym.compile_time_known_value = data.items[0];
+		} else {
+			errorf(name, "not implemented yet");
+			exit(1);
+		}
+	}
+
+	data.id = define_symbol(compiler, sym, name).id;
 	da_append(&compiler->data_section, data);
 
 	return true;
