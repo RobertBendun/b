@@ -53,13 +53,12 @@ static char const* inter(char const *str)
 
 	for (struct string_pool *p = string_intering_pool; p != NULL; p = p->next) {
 		if (p->strlen >= len && strcmp(str, p->str + (p->strlen - len)) == 0) {
-			free((void*)str);
 			return p->str + (p->strlen - len);
 		}
 	}
 
 	struct string_pool *p = malloc(sizeof(struct string_pool));
-	p->str = str;
+	p->str = strdup(str);
 	p->strlen = len;
 	p->next = string_intering_pool;
 	p->total = p->strlen + 1 + (p->next ? p->next->total : 0);
@@ -251,22 +250,27 @@ char const* token_short_name(struct token tok)
 static char const* source = NULL;
 static bool warnings_enabled = false;
 static char const* current_filename = NULL;
+static char const* current_function = NULL;
 
-void dump_location(FILE *out, struct token tok)
+void calc_location(struct token tok, size_t *line, size_t *column)
 {
-	size_t line = 1, column = 1;
 	char const *p = source;
 
 	do switch (*p) {
 	case '\n':
-		line++; [[fallthrough]];
+		++*line; [[fallthrough]];
 	case '\r':
-		column = 1;
+		*column = 1;
 		break;
 	default:
-		column++;
+		++*column;
 	} while (*++p && p != tok.p);
+}
 
+void dump_location(FILE *out, struct token tok)
+{
+	size_t line = 1, column = 1;
+	calc_location(tok, &line, &column);
 	fprintf(out, "%s:%zu:%zu: ", current_filename, line, column);
 }
 
@@ -1038,25 +1042,50 @@ bool parse_constant(struct parser *p, struct compiler *compiler, struct value *l
 {
 	struct token constant;
 	if (expect_token(p, &constant, TOK_INTEGER)) {
+integer:
 		lhs->kind = RVALUE;
 		lhs->offset = alloc_stack(compiler);
 		printf("\tmov rax, %"PRIu64"\n", constant.ival);
 		printf("\tmov QWORD [rbp-%zu], rax\n", lhs->offset);
 		return true;
 	}
+
 	if (expect_token(p, &constant, TOK_CHARACTER)) {
 		lhs->kind = RVALUE;
 		lhs->offset = alloc_stack(compiler);
 		printf("\tmov QWORD [rbp-%zu], %"PRIu64"\n", lhs->offset, constant.ival);
 		return true;
 	}
+
 	if (expect_token(p, &constant, TOK_STRING)) {
+string:
 		lhs->kind = RVALUE;
 		lhs->offset = alloc_stack(compiler);
 		printf("\tlea rax, [strend-%zu]\n", string_offset(constant.text));
 		printf("\tmov [rbp-%zu], rax\n", lhs->offset);
 		return true;
 	}
+
+
+	// FIXME: Tokenizer should have abstraction for this
+	size_t save = p->tokenizer.head;
+	constant = scan(&p->tokenizer);
+
+	if (constant.kind == TOK_IDENTIFIER) {
+		if (strcmp(constant.text, "__FILE__") == 0) {
+			constant.text = inter(current_filename);
+			goto string;
+		} else if (strcmp(constant.text, "__LINE__") == 0) {
+			size_t line = 1, column = 1;
+			calc_location(constant, &line, &column);
+			constant.ival = line;
+			goto integer;
+		} else if (strcmp(constant.text, "__FUNCTION__") == 0) {
+			constant.text = inter(current_function ? current_function : "");
+			goto string;
+		}
+	}
+	p->tokenizer.head = save;
 
 	return false;
 }
@@ -2056,6 +2085,8 @@ bool parse_function_definition(struct parser *p, struct compiler *compiler, stru
 
 	struct symbol fun = define_symbol(compiler, ((struct symbol) { .kind = GLOBAL, .name = name.text, .definition = name }), name);
 
+	current_function = name.text;
+
 	// TODO:
 
 	printf("global %s\n", name.text);
@@ -2394,6 +2425,7 @@ struct token scan(struct tokenizer *ctx)
 			case '\"':
 				da_append(&sb, '\0');
 				ret.text = inter(sb.items);
+				free(sb.items);
 				return ret;
 
 			case '*':
